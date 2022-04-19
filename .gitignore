@@ -1,3 +1,9 @@
+# Added by me
+experiments/
+saved_models/
+data/
+samples/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

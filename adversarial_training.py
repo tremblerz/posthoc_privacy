@@ -15,7 +15,7 @@ class ARL(object):
     def __init__(self) -> None:
         # Weighing term between privacy and accuracy, higher alpha has
         # higher weight towards privacy
-        self.alpha = 0.9
+        self.alpha = 0.999
         self.obf_in_size = 8
         self.obf_out_size = 5
         obf_layer_sizes = [self.obf_in_size, 10, 10, 6, self.obf_out_size]

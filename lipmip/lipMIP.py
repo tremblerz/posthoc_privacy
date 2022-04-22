@@ -101,7 +101,7 @@ class LipMIP(utils.ParameterObject):
         else:
             pre_bounds = self.preact
         squire = build_gurobi_model(network, pre_bounds, self.primal_norm,
-                                   verbose=self.verbose)
+                                   verbose=False)
 
         return squire, timer
 

@@ -3,6 +3,38 @@ import pickle
 import shutil
 import logging
 from tensorboardX import SummaryWriter
+from torch.utils.data import Dataset
+from torchvision import datasets, transforms
+import torch
+
+class MyDataset(Dataset):
+    def __init__(self, trainset):
+        self.set = trainset
+
+    def __getitem__(self, index):
+        data, target = self.set[index]
+        return data, target, index
+
+    def __len__(self):
+        return len(self.set)
+
+
+def get_dataloader(dset, batch_size=200):
+
+    if dset == 'mnist':
+        # MNIST Dataset
+        train_dataset = datasets.MNIST(root='./data/', train=True, transform=transforms.ToTensor(), download=True)
+        test_dataset = datasets.MNIST(root='./data/', train=False, transform=transforms.ToTensor(), download=False)
+    else:
+        print("dataset {} not implemented".format(dset))
+
+    train_dataset = MyDataset(train_dataset)
+    test_dataset = MyDataset(test_dataset)
+
+    # Data Loader (Input Pipeline)
+    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False)
+    return train_loader, test_loader
 
 
 def check_and_create_path(path):

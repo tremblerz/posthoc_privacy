@@ -1,26 +1,14 @@
+import imp
 import torch
 from torch import optim, save
-from torchvision import datasets, transforms
 
 from models.betavae import loss_function as vae_loss_fn
 from models.betavae import SmallVAE, BigVAE
 from models.gen import AdversaryModelGen
 
+from utils import get_dataloader
+
 min_test_loss = 1000.
-
-def get_dataloader(dset, batch_size=200):
-
-    if dset == 'mnist':
-        # MNIST Dataset
-        train_dataset = datasets.MNIST(root='./data/', train=True, transform=transforms.ToTensor(), download=True)
-        test_dataset = datasets.MNIST(root='./data/', train=False, transform=transforms.ToTensor(), download=False)
-    else:
-        print("dataset {} not implemented".format(dset))
-
-    # Data Loader (Input Pipeline)
-    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False)
-    return train_loader, test_loader
 
 def setup_vae():
     # load and train BigVAE
@@ -41,7 +29,7 @@ def setup_vae():
 def train(vae, train_loader, optimizer, beta, epoch):
     vae.train()
     train_loss = 0
-    for batch_idx, (data, _) in enumerate(train_loader):
+    for batch_idx, (data, _, _) in enumerate(train_loader):
         data = data.cuda()
         optimizer.zero_grad()
         recon_batch, mu, log_var = vae(data)
@@ -61,7 +49,7 @@ def test(vae, test_loader, beta):
     vae.eval()
     test_loss= 0
     with torch.no_grad():
-        for data, _ in test_loader:
+        for data, _, _ in test_loader:
             data = data.cuda()
             recon, mu, log_var = vae(data)
             

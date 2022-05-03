@@ -66,7 +66,7 @@ class Evaluation():
         self.arl_obj.vae.eval()
         sample_size, unanswered_samples = 0, 0
         noisy_pred_correct, noiseless_pred_correct = 0, 0
-        for batch_idx, (data, labels) in enumerate(self.test_loader):
+        for batch_idx, (data, labels, _) in enumerate(self.test_loader):
             data = data.cuda()
             mu, log_var = self.arl_obj.vae.encoder(data.view(-1, 784))
             center = self.arl_obj.vae.sampling(mu, log_var).cpu()
@@ -130,7 +130,7 @@ class Evaluation():
         self.arl_obj.vae.eval()
         sample_size, lip_vals = 0, []
         noisy_pred_correct, noiseless_pred_correct = 0, 0
-        for batch_idx, (data, labels) in enumerate(self.test_loader):
+        for batch_idx, (data, labels, _) in enumerate(self.test_loader):
             data = data.cuda()
             # get sample embedding from the VAE
             mu, log_var = self.arl_obj.vae.encoder(data.view(-1, 784))

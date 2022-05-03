@@ -54,6 +54,53 @@ class SmallVAE(nn.Module):
         return self.decoder(z), mu, log_var
 
 
+class NewSmallVAE(nn.Module):
+    def __init__(self, x_dim, h_dim1, h_dim2, z_dim):
+        super(SmallVAE, self).__init__()
+        
+        # encoder part
+        self.fc1 = nn.Linear(x_dim, h_dim1)
+        self.fc2 = nn.Linear(h_dim1, h_dim2)
+        self.fc3 = nn.Linear(h_dim2, h_dim2 // 2)
+        self.fc4 = nn.Linear(h_dim2 // 2, h_dim2 // 4)
+        self.fc5 = nn.Linear(h_dim2 // 4, h_dim2 // 8)
+        self.fc31 = nn.Linear(h_dim2 // 8, z_dim)
+        self.fc32 = nn.Linear(h_dim2 // 8, z_dim)
+        # decoder part
+        self.fc4_ = nn.Linear(z_dim, h_dim2 // 8)
+        self.fc41 = nn.Linear(h_dim2 // 8, h_dim2 // 4)
+        self.fc42 = nn.Linear(h_dim2 // 4, h_dim2 // 2)
+        self.fc43 = nn.Linear(h_dim2 // 2, h_dim2)
+        self.fc5_ = nn.Linear(h_dim2, h_dim1)
+        self.fc6 = nn.Linear(h_dim1, x_dim)
+        
+    def encoder(self, x):
+        h = F.relu(self.fc1(x))
+        h = F.relu(self.fc2(h))
+        h = F.relu(self.fc3(h))
+        h = F.relu(self.fc4(h))
+        h = F.relu(self.fc5(h))
+        return self.fc31(h), self.fc32(h) # mu, log_var
+    
+    def sampling(self, mu, log_var):
+        std = torch.exp(0.5*log_var)
+        eps = torch.randn_like(std)
+        return eps.mul(std).add_(mu) # return z sample
+        
+    def decoder(self, z):
+        h = F.relu(self.fc4_(z))
+        h = F.relu(self.fc41(h))
+        h = F.relu(self.fc42(h))
+        h = F.relu(self.fc43(h))
+        h = F.relu(self.fc5_(h))
+        return F.sigmoid(self.fc6(h)).view(-1, 1, 28, 28)
+    
+    def forward(self, x):
+        mu, log_var = self.encoder(x.view(-1, 784))
+        z = self.sampling(mu, log_var)
+        return self.decoder(z), mu, log_var
+
+
 
 class BigVAE(nn.Module):
     def __init__(self, hparams):

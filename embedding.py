@@ -6,6 +6,7 @@ from models.betavae import loss_function as vae_loss_fn
 from models.betavae import SmallVAE, BigVAE
 from models.gen import AdversaryModelGen
 
+min_test_loss = 1000.
 
 def get_dataloader(dset, batch_size=200):
 
@@ -70,14 +71,22 @@ def test(vae, test_loader, beta):
         
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))
+    return test_loss
+
+def save_model(vae, dset, beta):
+    torch.save(vae.state_dict(), "saved_models/{}_beta{}_vae.pt".format(dset, beta))
 
 def train_vae():
+    global min_test_loss
     dset, beta = "mnist", 5
     train_loader, test_loader = get_dataloader(dset)
     vae, optimizer = setup_vae()
     for epoch in range(1, 51):
-        train(train_loader, vae, optimizer, beta, epoch)
-        test(vae, test_loader, beta)
+        train(vae, train_loader, optimizer, beta, epoch)
+        loss_ = test(vae, test_loader, beta)
+        if loss_ < min_test_loss:
+            save_model(vae, dset, beta)
+            min_test_loss = loss_
 
-if __name__ == 'main':
+if __name__ == '__main__':
     train_vae()

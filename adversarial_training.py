@@ -12,12 +12,12 @@ from lipmip.relu_nets import ReLUNet
 
 
 class ARL(object):
-    def __init__(self) -> None:
+    def __init__(self, config) -> None:
         # Weighing term between privacy and accuracy, higher alpha has
         # higher weight towards privacy
-        self.alpha = 0.999
-        self.obf_in_size = 8
-        self.obf_out_size = 5
+        self.alpha = config["alpha"]
+        self.obf_in_size = config["obf_in"]
+        self.obf_out_size = config["obf_out"]
         obf_layer_sizes = [self.obf_in_size, 10, 10, 6, self.obf_out_size]
         self.obfuscator = ReLUNet(obf_layer_sizes).cuda()
 
@@ -35,9 +35,9 @@ class ARL(object):
         self.pred_optimizer = optim.Adam(self.pred_model.parameters())
         self.adv_optimizer = optim.Adam(self.adv_model.parameters())
 
-        self.setup_vae()
-
         self.dset = "mnist"
+
+        self.setup_vae()
         self.setup_data()
 
         self.min_final_loss = np.inf
@@ -46,6 +46,7 @@ class ARL(object):
     def setup_vae(self):
         self.vae, _ = setup_vae()
         self.vae.load_state_dict(torch.load("saved_models/vae.pt"))
+        print("loaded vae")
 
     def setup_data(self):
         self.train_loader, self.test_loader = get_dataloader(self.dset)
@@ -165,9 +166,10 @@ class ARL(object):
 
 
 if __name__ == '__main__':
-    arl = ARL()
+    config = {"alpha": 0.901, "obf_in": 8, "obf_out": 5}
+    arl = ARL(config)
     arl.setup_path()
     print("starting training")
-    for epoch in range(1, 51):
+    for epoch in range(1, 151):
         arl.train(epoch)
         arl.test()

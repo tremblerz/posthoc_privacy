@@ -1,8 +1,9 @@
-import imp
+import os
 import torch
 from torch import optim, save
+from torchvision.utils import save_image
 
-from models.betavae import loss_function as vae_loss_fn
+from models.betavae import MnistVAE, loss_function as vae_loss_fn
 from models.betavae import SmallVAE, BigVAE
 from models.gen import AdversaryModelGen
 
@@ -10,20 +11,11 @@ from utils import get_dataloader
 
 min_test_loss = 1000.
 
-def setup_vae():
-    # load and train BigVAE
-    # nc = 1
-    # nz = 8
-    # ndf = 16
-    # ngf = 16
-    beta = 1
-    # hparams_vae = {"nc": nc, "nz": nz, "ndf": ndf, "ngf": ngf}
-    # vae = BigVAE(hparams_vae)
-    # vae.cuda()
-
-    # Load and train SmallVAE
-    vae = SmallVAE(x_dim=784, h_dim1= 512, h_dim2=256, z_dim=8).cuda()
-    optimizer = optim.Adam(vae.parameters())
+def setup_vae(dset):
+    print(dset)
+    if dset == "mnist":
+        vae = MnistVAE({"nz": 8}).cuda()
+    optimizer = optim.Adam(vae.parameters(), lr=3e-4)
     return vae, optimizer
 
 def train(vae, train_loader, optimizer, beta, epoch):
@@ -32,7 +24,7 @@ def train(vae, train_loader, optimizer, beta, epoch):
     for batch_idx, (data, _, _) in enumerate(train_loader):
         data = data.cuda()
         optimizer.zero_grad()
-        recon_batch, mu, log_var = vae(data)
+        recon_batch, mu, log_var, z = vae(data)
         loss, _, _ = vae_loss_fn(recon_batch, data, mu, log_var, beta)
         
         loss.backward()
@@ -45,35 +37,42 @@ def train(vae, train_loader, optimizer, beta, epoch):
                 100. * batch_idx / len(train_loader), loss.item() / len(data)))
     print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
 
-def test(vae, test_loader, beta):
+def test(vae, test_loader, beta, epoch, model_name):
     vae.eval()
     test_loss= 0
     with torch.no_grad():
         for data, _, _ in test_loader:
             data = data.cuda()
-            recon, mu, log_var = vae(data)
+            recon, mu, log_var, z = vae(data)
             
             # sum up batch loss
             vae_l, _, _ = vae_loss_fn(recon, data, mu, log_var, beta)
             test_loss += vae_l.item()
-        
+        z = torch.randn(64, 8).cuda()
+        sample = vae.decode(z).cuda()
+        save_image(sample.view(64, 1, 28, 28),
+                   './samples/training/{}/epoch_{}.png'.format(model_name, epoch))
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))
     return test_loss
 
-def save_model(vae, dset, beta):
-    torch.save(vae.state_dict(), "saved_models/{}_beta{}_vae.pt".format(dset, beta))
+def save_model(vae, model_name):
+    torch.save(vae.state_dict(), "saved_models/{}.pt".format(model_name))
 
 def train_vae():
     global min_test_loss
-    dset, beta = "mnist", 5
+    dset, beta = "mnist", 3
+    model_name = "{}_beta{}_vae".format(dset, beta)
+    samples_dir = "./samples/training/{}".format(model_name)
+    if not os.path.isdir(samples_dir):
+        os.makedirs(samples_dir)
     train_loader, test_loader = get_dataloader(dset)
-    vae, optimizer = setup_vae()
-    for epoch in range(1, 51):
+    vae, optimizer = setup_vae(dset)
+    for epoch in range(1, 101):
         train(vae, train_loader, optimizer, beta, epoch)
-        loss_ = test(vae, test_loader, beta)
+        loss_ = test(vae, test_loader, beta, epoch, model_name)
         if loss_ < min_test_loss:
-            save_model(vae, dset, beta)
+            save_model(vae, model_name)
             min_test_loss = loss_
 
 if __name__ == '__main__':

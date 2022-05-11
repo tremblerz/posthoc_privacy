@@ -1,3 +1,4 @@
+from abc import ABC, abstractproperty
 import torch
 import torch.nn as nn
 from torch.nn import init
@@ -9,6 +10,7 @@ from torch.autograd import Variable
 def loss_function(recon_x, x, mu, logvar, beta):
     batch_size = x.shape[0]
     recons_loss = torch.nn.functional.mse_loss(recon_x, x, size_average=False).div(batch_size)
+    #BCE = F.binary_cross_entropy(recon_x, x, reduction='sum')
     # see Appendix B from VAE paper:
     # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
     # https://arxiv.org/abs/1312.6114
@@ -17,6 +19,203 @@ def loss_function(recon_x, x, mu, logvar, beta):
     kld_loss = klds.sum(1).mean(0, True)
     loss = recons_loss + beta * kld_loss
     return loss.mean(), recons_loss, kld_loss
+
+
+class BaseVAE(nn.Module, ABC):
+    def __init__(self) -> None:
+        super(BaseVAE, self).__init__()
+        self.flatten = nn.Flatten()
+
+    @property
+    @abstractproperty
+    def encoder(self):
+        pass
+
+    @property
+    @abstractproperty
+    def decoder(self):
+        pass
+
+    @property
+    @abstractproperty
+    def fc_upscale(self):
+        pass
+
+    @property
+    @abstractproperty
+    def fc_downscale(self):
+        pass
+
+    @property
+    @abstractproperty
+    def mu_net(self):
+        pass
+
+    @property
+    @abstractproperty
+    def sigma_net(self):
+        pass
+
+    def make_volume(self, x):
+        x = x.unsqueeze(-1).unsqueeze(-1)
+        return x.reshape(-1, 1, 28, 28)
+
+    def encode(self, x):
+        feature_volume = self.encoder(self.flatten(x))
+        feature_vector = feature_volume
+        h_downscaled = self.fc_downscale(feature_vector)
+        # print("encode h_downscaled", h_downscaled.sih_downscalede())
+        return self.mu_net(h_downscaled[:, :self.nz]), self.sigma_net(h_downscaled[:, self.nz:])
+
+    def decode(self, z):
+        h_upscaled = self.fc_upscale(z)
+        feature_volume = h_upscaled
+        return self.make_volume(self.decoder(feature_volume))
+
+    def reparametrize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
+
+    def forward(self, x):
+        # print("x", x.size())
+        mu, logvar = self.encode(x)
+        # print("mu, logvar", mu.size(), logvar.size())
+        z = self.reparametrize(mu, logvar)
+        # print("z", z.size())
+        decoded = self.decode(z)
+        return decoded, mu, logvar, z
+
+        
+class MnistVAE(BaseVAE):
+    def __init__(self, hparams):
+        super(MnistVAE, self).__init__()
+
+        self.hparams = hparams
+        self.have_cuda = False
+        nz = hparams["nz"]
+        self.nz = nz
+        self._encoder = nn.Sequential(
+            nn.Linear(784, 512),
+            nn.ELU(inplace=True),
+            nn.Dropout(0.1),
+
+            nn.Linear(512, 512),
+            nn.Tanh(),
+            nn.Dropout(0.1),
+
+            nn.Linear(512, nz*2)
+            # # input is 1 x 28 x 28
+            # nn.Conv2d(1, 16, 3, 2, 1, bias=False),
+            # nn.LeakyReLU(0.1, inplace=True),
+            # ##################
+            # # state size. 16 x 14 x 14
+            # nn.Conv2d(16, 32, 3, 2, 1, bias=False),
+            # nn.BatchNorm2d(32),
+            # nn.LeakyReLU(0.1, inplace=True),
+            # ##################
+            # # state size. 32 x 7 x 7
+            # nn.Conv2d(32, 32, 3, 1, 1, bias=False),
+            # nn.BatchNorm2d(32),
+            # nn.LeakyReLU(0.1, inplace=True),
+            # #################
+            # # state size. 32 x 7 x 7
+            # nn.Conv2d(32, 16, 3, 2, 0, bias=False),
+            # nn.BatchNorm2d(16),
+            # nn.LeakyReLU(0.1, inplace=True),
+            # ###############
+            # # state size. 16 x 3 x 3
+        )
+        self._decoder = nn.Sequential(
+            nn.Linear(nz, 512),
+            nn.Tanh(),
+            nn.Dropout(0.99),
+
+            nn.Linear(512, 512),
+            nn.ELU(),
+            nn.Dropout(0.99),
+
+            nn.Linear(512, 784),
+            nn.Sigmoid()
+            # # # state size. 32 x 1 x 1
+            # nn.ConvTranspose2d(32, 16, 2, 1, 0, bias=False),
+            # # nn.BatchNorm2d(16),
+            # nn.LeakyReLU(True),
+            # # #####################
+            # # # state size. 16 x 2 x 2
+            # nn.ConvTranspose2d(16, 8, 3, 2, 0, bias=False),
+            # # nn.BatchNorm2d(8),
+            # nn.LeakyReLU(True),
+            # # #####################
+            # # # state size. 8 x 5 x 5
+            # nn.ConvTranspose2d(8, 4, 3, 1, 0, bias=False),
+            # # nn.BatchNorm2d(4),
+            # nn.LeakyReLU(True),
+            # # #####################
+            # # # state size. 4 x 7 x 7
+            # nn.ConvTranspose2d(4, 2, 4, 2, 1, bias=False),
+            # # nn.BatchNorm2d(2),
+            # nn.LeakyReLU(True),
+            # # #####################
+            # # # state size. 2 x 14 x 14
+            # nn.ConvTranspose2d(2, 1, 4, 2, 1, bias=False),
+            # # nn.BatchNorm2d(1),
+            # nn.LeakyReLU(True),
+            # # #####################
+            # # # state size. 1 x 28 x 28
+            # nn.Conv2d(1, 1, 3, 1, 1, bias=False),
+            # nn.Sigmoid()
+            # # #####################
+            # # # state size. 1 x 28 x 28
+        )
+        self._fc_downscale = nn.Sequential(
+            nn.Identity()
+            # ###############
+            # # state size. 576
+            # nn.Linear(144, 32),
+            # nn.ReLU(),
+            # ###############
+            # # state size. 32
+            # nn.Linear(32, self.nz),
+            # nn.ReLU()
+            # ###############
+            # # state size. self.nz
+        )
+        self._fc_upscale = nn.Sequential(
+            nn.Identity()
+            # ###############
+            # # state size. self.nz
+            # nn.Linear(self.nz, 32),
+            # nn.ReLU()
+            # ###############
+            # # state size. 32
+        )
+        self._mu_net = nn.Linear(self.nz, self.nz)
+        self._sigma_net = nn.Linear(self.nz, self.nz)
+
+    @property
+    def encoder(self):
+        return self._encoder
+
+    @property
+    def decoder(self):
+        return self._decoder
+
+    @property
+    def fc_downscale(self):
+        return self._fc_downscale
+
+    @property
+    def fc_upscale(self):
+        return self._fc_upscale
+
+    @property
+    def mu_net(self):
+        return self._mu_net
+    
+    @property
+    def sigma_net(self):
+        return self._sigma_net
 
 
 class SmallVAE(nn.Module):
@@ -56,7 +255,7 @@ class SmallVAE(nn.Module):
 
 class NewSmallVAE(nn.Module):
     def __init__(self, x_dim, h_dim1, h_dim2, z_dim):
-        super(SmallVAE, self).__init__()
+        super(NewSmallVAE, self).__init__()
         
         # encoder part
         self.fc1 = nn.Linear(x_dim, h_dim1)

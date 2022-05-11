@@ -49,7 +49,7 @@ class Evaluation():
         delta = self.delta
         radius = self.radius
         proposed_bound = self.proposed_bound
-        self._log_path = "eval_{}_alpha{}_eps{}_delta{}_radius{}_proposal{}".format(dset, alpha, eps, delta, radius, proposed_bound)
+        self._log_path = "eval_{}_alpha{}_in_{}_out_{}_eps{}_delta{}_radius{}_proposal{}".format(dset, alpha, self.arl_obj.obf_in_size, self.arl_obj.obf_out_size, eps, delta, radius, proposed_bound)
         self._log_path = self.base_dir + self._log_path
         utils.check_and_create_path(self._log_path)
         utils.save_object(self, self._log_path)
@@ -141,6 +141,9 @@ class Evaluation():
                                    'l1Ball1', num_threads=8, verbose=True)
             cross_problem.compute_max_lipschitz()
             lip_val = cross_problem.result.value
+            if lip_val <= 1e-10:
+                print("problem")
+                lip_val = 1e-10
             lip_vals.append(lip_val)
             # pass it through obfuscator
             z_tilde = self.arl_obj.obfuscator(center)
@@ -164,15 +167,17 @@ class Evaluation():
 
 
 if __name__ == '__main__':
-    arl_config = {"alpha": 0.9999, "obf_in": 8, "obf_out": 5}
+    arl_config = {"alpha": 0.901, "obf_in": 8, "obf_out": 3,
+                  "noise_reg": True, "sigma": 1,
+                  "lip_reg": True, "lip_coeff": 0.01}
 
-    eps = 20.0
+    eps = 10
     delta = 0.2
 
-    proposed_bound = 1.5
+    proposed_bound = 100.5
     max_upper_bound_radius = 2.
     radius = 0.3
-    eval_size = 100
+    eval_size = 1000
     eval_config = {"epsilon": eps, "delta": delta, "radius": radius, "eval_size": eval_size,
                    "proposed_bound": proposed_bound, "max_upper_bound": max_upper_bound_radius}
     arl = ARL(arl_config)
@@ -182,5 +187,5 @@ if __name__ == '__main__':
     eval.logger.log_console(arl_config)
     eval.logger.log_console(eval_config)
     eval.test_local_sens()
-    eval.test_ptr()
+    #eval.test_ptr()
 

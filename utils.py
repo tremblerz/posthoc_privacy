@@ -1,3 +1,8 @@
+from abc import abstractmethod
+import numpy as np
+import torch.utils.data as data
+from glob import glob
+from PIL import Image
 import os
 import pickle
 import shutil
@@ -6,6 +11,86 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
 import torch
+
+
+class BaseDataset(data.Dataset):
+    """docstring for BaseDataset"""
+
+    def __init__(self, config):
+        super(BaseDataset, self).__init__()
+        self.format = config["format"]
+        self.set_filepaths(config["path"])
+        self.transforms = config["transforms"]
+
+    def set_filepaths(self, path):
+        filepaths = path + "/*.{}".format(self.format)
+        self.filepaths = glob(filepaths)
+
+    def load_image(self, filepath):
+        img = Image.open(filepath)
+        # img = np.array(img)
+        return img
+
+    @staticmethod
+    def to_tensor(obj):
+        return torch.tensor(obj)
+
+    @abstractmethod
+    def load_label(self):
+        pass
+
+    def __getitem__(self, index):
+        filepath = self.filepaths[index]
+        img = self.load_image(filepath)
+        img = self.transforms(img)
+        label = self.load_label(filepath)
+        label = self.to_tensor(label)
+        return img, label
+
+    def __len__(self):
+        return len(self.filepaths)
+
+
+class UTKFace(BaseDataset):
+    """docstring for UTKFace"""
+
+    def __init__(self, config):
+        super(UTKFace, self).__init__(config)
+        self.attribute = config["attribute"]
+
+    def load_label(self, filepath):
+        labels = filepath.split("/")[-1].split("_")
+        if self.attribute == "race":
+            try:
+                label = int(labels[2])
+            except:
+                print("corrupt label")
+                label = np.random.randint(0, 4)
+        elif self.attribute == "gender":
+            label = int(labels[1])
+        elif self.attribute == "age":
+            # label = float(labels[0])
+            if int(labels[0]) < 3:
+                label = 0
+            elif int(labels[0]) < 10:
+                label = 1
+            elif int(labels[0]) < 20:
+                label = 2
+            elif int(labels[0]) < 30:
+                label = 3
+            elif int(labels[0]) < 40:
+                label = 4
+            elif int(labels[0]) < 50:
+                label = 5
+            elif int(labels[0]) < 60:
+                label = 6
+            elif int(labels[0]) < 70:
+                label = 7
+            else:
+                label = 8
+            label = float(label)
+        return label
+
 
 class MyDataset(Dataset):
     def __init__(self, trainset):
@@ -18,6 +103,18 @@ class MyDataset(Dataset):
     def __len__(self):
         return len(self.set)
 
+def get_split(train_split, dataset):
+
+    dataset_size = len(dataset)
+    indices = list(range(dataset_size))
+    split = int(np.floor(train_split * dataset_size))
+    np.random.shuffle(indices)
+
+    train_indices, test_indices = indices[:split], indices[split:]
+    train_dataset = torch.utils.data.Subset(dataset, train_indices)
+    test_dataset = torch.utils.data.Subset(dataset, test_indices)
+    return train_dataset, test_dataset
+
 
 def get_dataloader(dset, batch_size=200):
 
@@ -25,6 +122,17 @@ def get_dataloader(dset, batch_size=200):
         # MNIST Dataset
         train_dataset = datasets.MNIST(root='./data/', train=True, transform=transforms.ToTensor(), download=True)
         test_dataset = datasets.MNIST(root='./data/', train=False, transform=transforms.ToTensor(), download=False)
+    elif dset == 'utkface':
+        # UTKFace Dataset
+        trainTransform = transforms.Compose([
+            transforms.Resize((64, 64)),
+            transforms.ToTensor()])
+
+        dataset = UTKFace({"path": "/u/abhi24/Datasets/Faces/UTKFace/UTKFace/",
+                           "transforms": trainTransform,
+                           "format": "jpg",
+                           "attribute": "age"})
+        train_dataset, test_dataset = get_split(0.8, dataset)
     else:
         print("dataset {} not implemented".format(dset))
 

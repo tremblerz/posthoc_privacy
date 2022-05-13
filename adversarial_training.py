@@ -1,8 +1,12 @@
+import pdb
 import pickle
 import numpy as np
 import torch
 import torch.nn as nn
 from torch import optim
+from torch.nn.modules.loss import _Loss
+from models.fc import MnistPredModel
+
 from utils import check_and_create_path
 
 from embedding import setup_vae
@@ -14,6 +18,28 @@ from lipmip.relu_nets import ReLUNet
 from lip_reg import net_Local_Lip, robust_loss
 
 
+class ContrastiveLoss(_Loss):
+    def __init__(self, margin):
+        super(ContrastiveLoss, self).__init__()
+        self.margin = margin
+
+    def get_mask(self, labels):
+        labels = labels.unsqueeze(-1).to(dtype=torch.float64)
+        class_diff = torch.cdist(labels, labels, p=1.0)
+        return torch.clamp(class_diff, 0, 1)
+
+    def get_pairwise(self, z):
+        z = z.view(z.shape[0], -1)
+        return torch.cdist(z, z, p=2.0)
+
+    def forward(self, z, labels):
+        mask = self.get_mask(labels).to(z.device)
+        pairwise_dist = self.get_pairwise(z)
+        loss = (1 - mask) * pairwise_dist +\
+               mask * torch.maximum(torch.tensor(0.).to(z.device), self.margin - pairwise_dist)
+        return loss.mean()
+
+
 class ARL(object):
     def __init__(self, config) -> None:
         # Weighing term between privacy and accuracy, higher alpha has
@@ -21,13 +47,15 @@ class ARL(object):
         self.alpha = config["alpha"]
         self.obf_in_size = config["obf_in"]
         self.obf_out_size = config["obf_out"]
+
         self.lip_reg = config.get('lip_reg') or False
         self.noise_reg = config.get('noise_reg') or False
+        self.siamese_reg = config.get('siamese_reg') or False
+
         obf_layer_sizes = [self.obf_in_size, 10, 10, 6, self.obf_out_size]
         self.obfuscator = ReLUNet(obf_layer_sizes).cuda()
 
-        pred_layer_sizes = [self.obf_out_size, 10, 10]
-        self.pred_model = ReLUNet(pred_layer_sizes).cuda()
+        self.pred_model = MnistPredModel(self.obf_out_size).cuda()
 
         adv_model_params = {"channels": self.obf_out_size, "output_channels": 1,
                             "downsampling": 0, "offset": 4}
@@ -45,6 +73,10 @@ class ARL(object):
         if self.lip_reg:
             self.lip_coeff = config["lip_coeff"]
             self.setup_lip_reg()
+        if self.siamese_reg:
+            self._lambda = config["lambda"]
+            self.margin = config["margin"]
+            self.setup_siamese_reg()
 
         self.dset = "mnist"
 
@@ -52,7 +84,10 @@ class ARL(object):
         self.setup_data()
 
         self.min_final_loss = np.inf
-        self.assign_paths(self.lip_reg, self.noise_reg)
+        self.assign_paths(self.lip_reg, self.noise_reg, self.siamese_reg)
+
+    def setup_siamese_reg(self):
+        self.contrastive_loss = ContrastiveLoss(self.margin)
 
     def setup_lip_reg(self):
         self.warmup = 5
@@ -70,14 +105,14 @@ class ARL(object):
                                           self.schedule_length)
 
     def setup_vae(self):
-        self.vae, _ = setup_vae()
-        self.vae.load_state_dict(torch.load("saved_models/mnist_beta5_vae.pt"))
+        self.vae, _ = setup_vae("mnist")
+        self.vae.load_state_dict(torch.load("saved_models/mnist_beta3_vae.pt"))
         print("loaded vae")
 
     def setup_data(self):
         self.train_loader, self.test_loader = get_dataloader(self.dset)
 
-    def assign_paths(self, lip_reg, noise_reg):
+    def assign_paths(self, lip_reg, noise_reg, siamese_reg):
         self.base_dir = "./experiments/in_{}_out_{}_alpha_{}".format(self.obf_in_size,
                                                                      self.obf_out_size,
                                                                      self.alpha)
@@ -85,6 +120,8 @@ class ARL(object):
             self.base_dir += "_lipreg_{}".format(self.lip_coeff)
         if noise_reg:
             self.base_dir += "_noisereg_{}".format(self.sigma)
+        if siamese_reg:
+            self.base_dir += "_siamesereg_{}_{}".format(self.margin, self._lambda)
         self.obf_path = self.base_dir + "/obf.pt"
         self.adv_path = self.base_dir + "/adv.pt"
         self.pred_path = self.base_dir + "/pred.pt"
@@ -113,7 +150,7 @@ class ARL(object):
         noise_dist = torch.distributions.Laplace(torch.zeros_like(z), self.sigma)
         return noise_dist.sample()
 
-    def train(self, epoch, u_list, u_train):
+    def train(self, epoch, u_list=None, u_train=None):
         self.vae.eval()
         train_loss = 0
         if self.lip_reg:
@@ -146,8 +183,8 @@ class ARL(object):
             data, labels = data.cuda(), labels.cuda()
             # get sample embedding from the VAE
             with torch.no_grad():
-                mu, log_var = self.vae.encoder(data.view(-1, 784))
-                z = self.vae.sampling(mu, log_var)
+                mu, sigma = self.vae.encode(data.view(-1, 784))
+                z = self.vae.reparametrize(mu, sigma)
             
             # pass it through obfuscator
             z_tilde = self.obfuscator(z)
@@ -197,9 +234,15 @@ class ARL(object):
             rec = self.adv_model(z_tilde)
             rec_loss = self.rec_loss_fn(rec, data)
             total_loss = self.alpha*rec_loss + (1-self.alpha)*pred_loss
+
+            if self.siamese_reg:
+                siamese_loss = self.contrastive_loss(z, labels)
+
             self.obf_optimizer.zero_grad()
             if self.lip_reg:
-                total_loss = self.lip_coeff*(1-kappa1)*local_loss + total_loss
+                total_loss += self.lip_coeff*(1-kappa1)*local_loss
+            if self.siamese_reg:
+                total_loss += self._lambda*siamese_loss
             total_loss.backward()
             self.obf_optimizer.step()
             
@@ -245,8 +288,8 @@ class ARL(object):
             for data, labels, _ in self.test_loader:
                 data, labels = data.cuda(), labels.cuda()
                 # get sample embedding from the VAE
-                mu, log_var = self.vae.encoder(data.view(-1, 784))
-                z = self.vae.sampling(mu, log_var)
+                mu, sigma = self.vae.encode(data.view(-1, 784))
+                z = self.vae.reparametrize(mu, sigma)
 
                 # pass it through obfuscator
                 z_tilde = self.obfuscator(z)
@@ -276,12 +319,13 @@ class ARL(object):
 
 if __name__ == '__main__':
     # TODO integrate the kappa and epsilon scheduler
-    config = {"alpha": 0.901, "obf_in": 8, "obf_out": 3,
-              "lip_reg": True, "lip_coeff": 0.01,
-              "noise_reg": True, "sigma": 1}
+    config = {"alpha": 0.001, "obf_in": 8, "obf_out": 8,
+              "lip_reg": False, "lip_coeff": 0.01,
+              "noise_reg": False, "sigma": 0.01,
+              "siamese_reg": True, "margin": 25 , "lambda": 100.0}
     arl = ARL(config)
     arl.setup_path()
-    print("starting training")
+    print("starting training", config)
     for epoch in range(1, 301):
         if config["lip_reg"]:
             if epoch == 1:

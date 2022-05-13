@@ -13,6 +13,8 @@ from embedding import get_dataloader
 from torch.distributions import Laplace
 from adversarial_training import ARL
 
+from PIL import Image
+import matplotlib.pyplot as plt
 
 seed = 2
 torch.manual_seed(seed)
@@ -42,14 +44,16 @@ class Evaluation():
 
         self.base_dir = "./experiments/"
 
-    def create_logger(self):
+    def create_logger(self, arl_config):
         dset = self.arl_obj.dset
         alpha = self.arl_obj.alpha
         eps = self.epsilon
         delta = self.delta
         radius = self.radius
         proposed_bound = self.proposed_bound
-        self._log_path = "eval_{}_alpha{}_in_{}_out_{}_eps{}_delta{}_radius{}_proposal{}".format(dset, alpha, self.arl_obj.obf_in_size, self.arl_obj.obf_out_size, eps, delta, radius, proposed_bound)
+        self._log_path = "eval_{}_eps{}_delta{}_radius{}_proposal{}".format(dset, eps, delta, radius, proposed_bound)
+        for key, val in arl_config.items():
+            self._log_path += '_' + str(key) + '_' + str(val)
         self._log_path = self.base_dir + self._log_path
         utils.check_and_create_path(self._log_path)
         utils.save_object(self, self._log_path)
@@ -64,12 +68,13 @@ class Evaluation():
 
     def test_ptr(self):
         self.arl_obj.vae.eval()
+        self.arl_obj.pred_model.eval()
         sample_size, unanswered_samples = 0, 0
         noisy_pred_correct, noiseless_pred_correct = 0, 0
         for batch_idx, (data, labels, _) in enumerate(self.test_loader):
             data = data.cuda()
-            mu, log_var = self.arl_obj.vae.encoder(data.view(-1, 784))
-            center = self.arl_obj.vae.sampling(mu, log_var).cpu()
+            mu, log_var = self.arl_obj.vae.encode(data.view(-1, 784))
+            center = self.arl_obj.vae.reparametrize(mu, log_var).cpu()
 
             lower_bound_s = self.radius
             upper_bound_s = self.max_upper_bound_radius
@@ -81,6 +86,11 @@ class Evaluation():
             lip_val = cross_problem.result.value
             self.logger.log_console(lip_val)
             if lip_val > self.proposed_bound:
+                # Investigate how these images look
+                rec = self.arl_obj.vae.decode(center[0].unsqueeze(0).cuda()).cpu()
+                #img = Image.fromarray(rec[0][0].detach().numpy())
+                #img.convert("L")
+                plt.imsave("./samples/ptr/{}.png".format(batch_idx), rec[0][0].detach())
                 self.logger.log_console("bot before starting")
                 unanswered_samples += 1
             else:
@@ -124,17 +134,18 @@ class Evaluation():
         assert sample_size + unanswered_samples - 1 == batch_idx
         noisy_pred_acc = noisy_pred_correct.item() / sample_size
         noiseless_pred_acc = noiseless_pred_correct.item() / sample_size
-        self.logger.log_console('====> Unanswered_samples {}, Noisy pred acc {:.2f}, Noiseless pred acc {:.2f}'.format(unanswered_samples, noisy_pred_acc, noiseless_pred_acc))
+        self.logger.log_console('====> Unanswered_samples {}/{}, Noisy pred acc {:.2f}, Noiseless pred acc {:.2f}'.format(unanswered_samples, batch_idx, noisy_pred_acc, noiseless_pred_acc))
 
     def test_local_sens(self):
         self.arl_obj.vae.eval()
+        self.arl_obj.pred_model.eval()
         sample_size, lip_vals = 0, []
         noisy_pred_correct, noiseless_pred_correct = 0, 0
         for batch_idx, (data, labels, _) in enumerate(self.test_loader):
             data = data.cuda()
             # get sample embedding from the VAE
-            mu, log_var = self.arl_obj.vae.encoder(data.view(-1, 784))
-            center = self.arl_obj.vae.sampling(mu, log_var).cpu()
+            mu, log_var = self.arl_obj.vae.encode(data.view(-1, 784))
+            center = self.arl_obj.vae.reparametrize(mu, log_var).cpu()
             # batch size is 1 and we are removing the 0th dimension for Lip estimation
             simple_domain = Hyperbox.build_linf_ball(center[0], self.radius)
             cross_problem = LipMIP(self.arl_obj.obfuscator.cpu(), simple_domain,
@@ -164,28 +175,31 @@ class Evaluation():
         noiseless_pred_acc = noiseless_pred_correct.item() / sample_size
         self.logger.log_console('====> Noisy pred acc {:.2f}, Noiseless pred acc {:.2f}'.format(noisy_pred_acc, noiseless_pred_acc))
         self.logger.log_console('====> mean = {:.4f}, std = {:.4f}'.format(np.array(lip_vals).mean(), np.array(lip_vals).std()))
+        return np.array(lip_vals).mean()
 
 
 if __name__ == '__main__':
-    arl_config = {"alpha": 0.901, "obf_in": 8, "obf_out": 3,
-                  "noise_reg": True, "sigma": 1,
-                  "lip_reg": True, "lip_coeff": 0.01}
+    arl_config = {"alpha": 0.99, "obf_in": 8, "obf_out": 8,
+                  "lip_reg": False, "lip_coeff": 0.01,
+                  "noise_reg": True, "sigma": 0.01,
+                  "siamese_reg": True, "margin": 25, "lambda": 100.0}
 
-    eps = 10
+    eps = 5
     delta = 0.2
 
-    proposed_bound = 100.5
+    proposed_bound = 0.84
     max_upper_bound_radius = 2.
-    radius = 0.3
-    eval_size = 1000
+    radius = 0.2
+    eval_size = 100
     eval_config = {"epsilon": eps, "delta": delta, "radius": radius, "eval_size": eval_size,
                    "proposed_bound": proposed_bound, "max_upper_bound": max_upper_bound_radius}
     arl = ARL(arl_config)
     arl.load_state()
     eval = Evaluation(arl, eval_config)
-    eval.create_logger()
+    eval.create_logger(arl_config)
     eval.logger.log_console(arl_config)
     eval.logger.log_console(eval_config)
-    eval.test_local_sens()
+    mean_lc = eval.test_local_sens()
+    #eval.proposed_bound = mean_lc + 1
     #eval.test_ptr()
 

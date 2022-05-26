@@ -1,6 +1,7 @@
 from collections import OrderedDict
 from distutils.command.config import config
 import os
+import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -16,6 +17,12 @@ from embedding import get_dataloader
 
 from models.gen import AdversaryModelGen
 from lipmip.relu_nets import ReLUNet
+
+
+seed = 2
+torch.manual_seed(seed)
+random.seed(seed)
+np.random.seed(seed)
 
 
 class ContrastiveLoss(_Loss):

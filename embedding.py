@@ -1,4 +1,6 @@
 import os
+import random
+import numpy as np
 import torch
 from torch import optim, save
 from torchvision.utils import save_image
@@ -7,6 +9,11 @@ import torch.nn as nn
 from models.betavae import UTKVAE, FMnistVAE, MnistVAE, loss_function as vae_loss_fn
 
 from utils import get_dataloader
+
+seed = 2
+torch.manual_seed(seed)
+random.seed(seed)
+np.random.seed(seed)
 
 min_test_loss = 1000.
 

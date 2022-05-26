@@ -23,3 +23,51 @@ class MnistPredModel(nn.Sequential):
             nn.Dropout(0.1),
             nn.Linear(10, 10),
         )
+
+
+class FMnistPredModel(nn.Sequential):
+    def __init__(self, in_dims):
+        super(FMnistPredModel, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(in_dims, 10),
+            nn.BatchNorm1d(10),
+            nn.LeakyReLU(True),
+            nn.Dropout(0.2),
+            nn.Linear(10, 10),
+            nn.BatchNorm1d(10),
+            nn.LeakyReLU(True),
+            nn.Dropout(0.2),
+            nn.Linear(10, 10),
+            nn.BatchNorm1d(10),
+            nn.LeakyReLU(True),
+            nn.Dropout(0.1),
+            nn.Linear(10, 10),
+            nn.BatchNorm1d(10),
+            nn.LeakyReLU(True),
+            nn.Dropout(0.1),
+            nn.Linear(10, 10),
+        )
+
+
+class UTKPredModel(nn.Sequential):
+    def __init__(self, in_dims):
+        super(UTKPredModel, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(in_dims, 10),
+            nn.BatchNorm1d(10),
+            nn.LeakyReLU(True),
+            nn.Dropout(0.2),
+            nn.Linear(10, 10),
+            nn.BatchNorm1d(10),
+            nn.LeakyReLU(True),
+            nn.Dropout(0.2),
+            nn.Linear(10, 10),
+            nn.BatchNorm1d(10),
+            nn.LeakyReLU(True),
+            nn.Dropout(0.1),
+            nn.Linear(10, 2),
+            # nn.BatchNorm1d(10),
+            # nn.LeakyReLU(True),
+            # nn.Dropout(0.1),
+            # nn.Linear(10, 2),
+        )

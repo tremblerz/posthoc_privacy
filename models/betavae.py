@@ -116,30 +116,30 @@ class UTKVAE(BaseVAE):
 
         self.encoder = nn.Sequential(
             # state size. 3 x 64 x 64
-            nn.Conv2d(3, 128, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(3, 64, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(64),
             nn.LeakyReLU(0.2, inplace=True),
             #################
             # 32x32
-            nn.Conv2d(128, 256, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(256),
+            nn.Conv2d(64, 128, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2, inplace=True),
             ###############
             # 16x16
-            nn.Conv2d(256, 256, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(256),
+            nn.Conv2d(128, 128, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2, inplace=True),
             ###############
-            # state size. 256 x 8 x 8
-            nn.Conv2d(256, 512, 3, 2, 1, bias=False),
-            nn.BatchNorm2d(512),
+            # state size. 128 x 8 x 8
+            nn.Conv2d(128, 256, 3, 2, 1, bias=False),
+            nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace=True),
-            # state size. 512 x 4 x 4
-            nn.Conv2d(512, 512, 4, 1, 0, bias=False),
+            # state size. 256 x 4 x 4
+            nn.Conv2d(256, 256, 4, 1, 0, bias=False),
             # nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Flatten()
-            # state size. 512
+            # state size. 256
         )
 
         self.decoder = nn.Sequential(
@@ -174,9 +174,8 @@ class UTKVAE(BaseVAE):
         )
 
         self._fc_downscale = nn.Sequential(
-            # state size. 512
-            nn.Linear(512, 128),
-            nn.Linear(128, 2*self.nz)
+            # state size. 256
+            nn.Linear(256, 2*self.nz)
         )
 
         self._fc_upscale = nn.Sequential(
@@ -213,9 +212,126 @@ class UTKVAE(BaseVAE):
         return self._sigma_net
 
 
+class WineVAE(BaseVAE):
+    def __init__(self, hparams):
+        super(WineVAE, self).__init__()
+        self.hparams = hparams
+        nz = hparams["nz"]
+        self.nz = nz
+        self._encoder = nn.Sequential(
+            nn.Linear(12, 50),
+            nn.ELU(inplace=True),
+            nn.Dropout(0.1),
+            nn.Linear(50, nz*2),
+        )
+        self._decoder = nn.Sequential(
+            nn.Linear(nz, 50),
+            nn.Tanh(),
+            nn.Linear(50, 12),
+        )
+        self._fc_downscale = nn.Sequential(
+            nn.Identity()
+        )
+        self._fc_upscale = nn.Sequential(
+            nn.Identity()
+        )
+        self._mu_net = nn.Linear(nz, nz)
+        self._sigma_net = nn.Linear(nz, nz)
+
+    @property
+    def encoder(self):
+        return self._encoder
+
+    @property
+    def decoder(self):
+        return self._decoder
+
+    @property
+    def fc_downscale(self):
+        return self._fc_downscale
+
+    @property
+    def fc_upscale(self):
+        return self._fc_upscale
+
+    @property
+    def mu_net(self):
+        return self._mu_net
+    
+    @property
+    def sigma_net(self):
+        return self._sigma_net
+
+
 class MnistVAE(BaseVAE):
     def __init__(self, hparams):
         super(MnistVAE, self).__init__()
+
+        self.hparams = hparams
+        nz = hparams["nz"]
+        self.nz = nz
+        self._encoder = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(784, 512),
+            nn.ELU(inplace=True),
+            nn.Dropout(0.1),
+
+            nn.Linear(512, 512),
+            nn.Tanh(),
+            nn.Dropout(0.1),
+
+            nn.Linear(512, nz*2)
+        )
+        self._decoder = nn.Sequential(
+            nn.Linear(nz, 512),
+            nn.Tanh(),
+            nn.Dropout(0.01),
+
+            nn.Linear(512, 512),
+            nn.ELU(),
+            nn.Dropout(0.01),
+
+            nn.Linear(512, 784),
+            nn.Sigmoid(),
+            Reshape(-1, 1, 28, 28)
+        )
+        self._fc_downscale = nn.Sequential(
+            nn.Identity()
+        )
+        self._fc_upscale = nn.Sequential(
+            nn.Identity()
+        )
+        self._mu_net = nn.Linear(self.nz, self.nz)
+        self._sigma_net = nn.Linear(self.nz, self.nz)
+
+    @property
+    def encoder(self):
+        return self._encoder
+
+    @property
+    def decoder(self):
+        return self._decoder
+
+    @property
+    def fc_downscale(self):
+        return self._fc_downscale
+
+    @property
+    def fc_upscale(self):
+        return self._fc_upscale
+
+    @property
+    def mu_net(self):
+        return self._mu_net
+    
+    @property
+    def sigma_net(self):
+        return self._sigma_net
+
+
+class FMnistVAE(BaseVAE):
+    def __init__(self, hparams):
+        super(FMnistVAE, self).__init__()
 
         self.hparams = hparams
         nz = hparams["nz"]

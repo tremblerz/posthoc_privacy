@@ -70,25 +70,17 @@ class UTKFace(BaseDataset):
             label = int(labels[1])
         elif self.attribute == "age":
             # label = float(labels[0])
-            if int(labels[0]) < 3:
+            if int(labels[0]) < 15:
                 label = 0
-            elif int(labels[0]) < 10:
-                label = 1
-            elif int(labels[0]) < 20:
-                label = 2
             elif int(labels[0]) < 30:
-                label = 3
-            elif int(labels[0]) < 40:
-                label = 4
+                label = 1
             elif int(labels[0]) < 50:
-                label = 5
-            elif int(labels[0]) < 60:
-                label = 6
+                label = 2
             elif int(labels[0]) < 70:
-                label = 7
+                label = 3
             else:
-                label = 8
-            label = float(label)
+                label = 4
+            #label = float(label)
         return label
 
 
@@ -122,6 +114,10 @@ def get_dataloader(dset, batch_size=200):
         # MNIST Dataset
         train_dataset = datasets.MNIST(root='./data/', train=True, transform=transforms.ToTensor(), download=True)
         test_dataset = datasets.MNIST(root='./data/', train=False, transform=transforms.ToTensor(), download=False)
+    elif dset == 'fmnist':
+        # Fashion MNIST
+        train_dataset = datasets.FashionMNIST('./data', train=True, download=True, transform=transforms.ToTensor())
+        test_dataset = datasets.FashionMNIST('./data', train=False, download=True, transform=transforms.ToTensor())
     elif dset == 'utkface':
         # UTKFace Dataset
         trainTransform = transforms.Compose([
@@ -131,7 +127,7 @@ def get_dataloader(dset, batch_size=200):
         dataset = UTKFace({"path": "/u/abhi24/Datasets/Faces/UTKFace/UTKFace/",
                            "transforms": trainTransform,
                            "format": "jpg",
-                           "attribute": "age"})
+                           "attribute": "gender"})
         train_dataset, test_dataset = get_split(0.8, dataset)
     else:
         print("dataset {} not implemented".format(dset))

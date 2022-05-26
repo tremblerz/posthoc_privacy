@@ -37,7 +37,7 @@ class Evaluation():
 
         # For now we are using center of 0 and l_inf norm of size 1 around the center to define the output space
         self.out_domain = 'l1Ball1'
-        self.dset = 'mnist'
+        self.dset = arl_obj.dset
         self.setup_data()
 
         self.arl_obj.on_cpu()
@@ -144,14 +144,15 @@ class Evaluation():
         for batch_idx, (data, labels, _) in enumerate(self.test_loader):
             data = data.cuda()
             # get sample embedding from the VAE
-            mu, log_var = self.arl_obj.vae.encode(data.view(-1, 784))
+            mu, log_var = self.arl_obj.vae.encode(data)#data.view(-1, 784))
             center = self.arl_obj.vae.reparametrize(mu, log_var).cpu()
-            # batch size is 1 and we are removing the 0th dimension for Lip estimation
+            # We are using the first example for Lip estimation
             simple_domain = Hyperbox.build_linf_ball(center[0], self.radius)
             cross_problem = LipMIP(self.arl_obj.obfuscator.cpu(), simple_domain,
                                    'l1Ball1', num_threads=8, verbose=True)
             cross_problem.compute_max_lipschitz()
             lip_val = cross_problem.result.value
+            print(batch_idx, lip_val)
             if lip_val <= 1e-10:
                 print("problem")
                 lip_val = 1e-10
@@ -179,13 +180,10 @@ class Evaluation():
 
 
 if __name__ == '__main__':
-    arl_config = {"alpha": 0.99, "obf_in": 8, "obf_out": 8,
-                  "lip_reg": False, "lip_coeff": 0.01,
-                  "noise_reg": True, "sigma": 0.01,
-                  "siamese_reg": True, "margin": 25, "lambda": 100.0}
+    arl_config = {'tag': 'gender', 'alpha': 0.0, 'dset': 'utkface', 'obf_in': 10, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True, 'sigma': 0.05, 'siamese_reg': False, 'margin': 25, 'lambda': 25.0}
 
     eps = 5
-    delta = 0.2
+    delta = 0.1
 
     proposed_bound = 0.84
     max_upper_bound_radius = 2.

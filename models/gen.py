@@ -86,62 +86,93 @@ class AdversaryModelGen(nn.Module):
         padding_type = 'reflect'
         norm_layer = nn.BatchNorm2d
 
-        # input is BxZ
-        # We first make it BxZx1x1
-        # Then BxZx3x3
-        # Then BxZx7x7
-        # Then BxZ*2x14x14
-        # Then BxZx28x28
-        model = [
-                    Vec2Vol(),
-                    nn.ConvTranspose2d(input_nc, input_nc,
-                                         kernel_size=3, stride=2,
-                                         padding=1, output_padding=1, bias=use_bias),
-                    nn.Conv2d(input_nc, ngf, kernel_size=3, padding=1, bias=use_bias),
-                    norm_layer(ngf),
-                    nn.ReLU(True),
-                ]
+        if config["dset"] in ["mnist", "fmnist"]:
+            # input is BxZ
+            # We first make it BxZx1x1
+            # Then BxZx3x3
+            # Then BxZx7x7
+            # Then BxZ*2x14x14
+            # Then BxZx28x28
+            model = [
+                        Vec2Vol(),
+                        nn.ConvTranspose2d(input_nc, input_nc,
+                                            kernel_size=3, stride=2,
+                                            padding=1, output_padding=1, bias=use_bias),
+                        nn.Conv2d(input_nc, ngf, kernel_size=3, padding=1, bias=use_bias),
+                        norm_layer(ngf),
+                        nn.ReLU(True),
+                    ]
 
-        for i in range(n_downsampling):
-            mult = 2 ** i
-            model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
-                      norm_layer(ngf * mult * 2), nn.ReLU(True)]
+            for i in range(n_downsampling):
+                mult = 2 ** i
+                model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                        norm_layer(ngf * mult * 2), nn.ReLU(True)]
 
-        mult = 2 ** n_downsampling
-        for i in range(n_blocks):
-            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+            mult = 2 ** n_downsampling
+            for i in range(n_blocks):
+                model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
 
-        for i in range(n_downsampling):  # add upsampling layers
-            mult = 2 ** (n_downsampling - i)
-            model += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
-                                         kernel_size=3, stride=2,
-                                         padding=1, output_padding=1, bias=use_bias),
-                      norm_layer(int(ngf * mult / 2)), nn.ReLU(True)]
+            for i in range(n_downsampling):  # add upsampling layers
+                mult = 2 ** (n_downsampling - i)
+                model += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+                                            kernel_size=3, stride=2,
+                                            padding=1, output_padding=1, bias=use_bias),
+                        norm_layer(int(ngf * mult / 2)), nn.ReLU(True)]
 
-        n_upsampling_extra = offset - n_downsampling 
-        for i in range(n_upsampling_extra):
-            model += [nn.ConvTranspose2d(ngf, ngf,
-                                         kernel_size=3, stride=2,
-                                         padding=1, output_padding=1, bias=use_bias),
-                      norm_layer(ngf), nn.ReLU(True)]
-            if False and i == 0:
-                model += [nn.Conv2d(ngf, ngf,
-                                    kernel_size=2, stride=1, padding=0),
-                         norm_layer(ngf), nn.ReLU(True)]
-        #model += [nn.ConvTranspose2d(ngf, output_nc, kernel_size=3, stride=2,
-        #                             padding=1, output_padding=1, bias=use_bias)]
-        model += [nn.Conv2d(ngf, ngf//4, kernel_size=3, padding=0)]
-        model += [nn.ConvTranspose2d(ngf//4, output_nc, kernel_size=3, stride=2,
-                                     padding=1, output_padding=1, bias=use_bias)]
-        #model += [nn.Conv2d(output_nc, output_nc, kernel_size=3, )
-        '''model += [nn.ReflectionPad2d(3)]
-        model += [nn.Conv2d(ngf, ngf//2, kernel_size=7, padding=0)]
-        model += [nn.ReflectionPad2d(3)]
-        model += [nn.Conv2d(ngf//2, ngf//4, kernel_size=5, padding=0)]
-        model += [nn.ReflectionPad2d(3)]
-        model += [nn.Conv2d(ngf//4, output_nc, kernel_size=5, padding=0)]
-        model += [nn.ReflectionPad2d(3)]
-        model += [nn.Conv2d(output_nc, output_nc, kernel_size=5, padding=0)]'''
+            n_upsampling_extra = offset - n_downsampling 
+            for i in range(n_upsampling_extra):
+                model += [nn.ConvTranspose2d(ngf, ngf,
+                                            kernel_size=3, stride=2,
+                                            padding=1, output_padding=1, bias=use_bias),
+                        norm_layer(ngf), nn.ReLU(True)]
+            model += [nn.Conv2d(ngf, ngf//4, kernel_size=3, padding=0)]
+            model += [nn.ConvTranspose2d(ngf//4, output_nc, kernel_size=3, stride=2,
+                                        padding=1, output_padding=1, bias=use_bias)]
+        elif config["dset"] == "utkface":
+            # input is BxZ
+            # We first make it Bx64x1x1
+            # Then Bx64x2x2
+            # Then Bx32x4x4
+            # Then Bx16x8x8
+            # Then Bx16x16x16
+            # Then Bx8x32x32
+            # Then Bx3x64x64
+            model = [   # BxZ
+                        Vec2Vol(),
+                        # BxZx1x1
+                        nn.ConvTranspose2d(input_nc, 64,
+                                            kernel_size=3, stride=2,
+                                            padding=1, output_padding=1, bias=use_bias),
+                        norm_layer(64), nn.ReLU(True),
+                        # Bx64x2x2
+                        nn.ConvTranspose2d(64, 32,
+                                           kernel_size=3, stride=2,
+                                           padding=1, output_padding=1, bias=use_bias),
+                        norm_layer(32), nn.ReLU(True),
+                        # Bx32x4x4
+                        nn.ConvTranspose2d(32, 16,
+                                           kernel_size=3, stride=2,
+                                           padding=1, output_padding=1, bias=use_bias),
+                        norm_layer(16), nn.ReLU(True),
+                        # Bx16x8x8
+                        nn.ConvTranspose2d(16, 16,
+                                           kernel_size=3, stride=2,
+                                           padding=1, output_padding=1, bias=use_bias),
+                        norm_layer(16), nn.ReLU(True),
+                        # Bx16x16x16
+                        nn.ConvTranspose2d(16, 8,
+                                           kernel_size=3, stride=2,
+                                           padding=1, output_padding=1, bias=use_bias),
+                        norm_layer(8), nn.ReLU(True),
+                        # Bx8x32x32
+                        nn.ConvTranspose2d(8, 3,
+                                           kernel_size=3, stride=2,
+                                           padding=1, output_padding=1, bias=use_bias),
+                        norm_layer(3), nn.ReLU(True),
+                        # Bx3x64x64
+                        nn.Conv2d(3, 3, 3, 1, 1)
+                        # Bx3x64x64
+                    ]
 
         self.m = nn.Sequential(*model)
 

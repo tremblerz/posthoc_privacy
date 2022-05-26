@@ -1,11 +1,15 @@
+from collections import OrderedDict
+from distutils.command.config import config
+import os
 import pdb
 import pickle
 import numpy as np
 import torch
 import torch.nn as nn
+from torchvision.utils import save_image
 from torch import optim
 from torch.nn.modules.loss import _Loss
-from models.fc import MnistPredModel
+from models.fc import MnistPredModel, FMnistPredModel, UTKPredModel
 
 from utils import check_and_create_path
 
@@ -44,6 +48,7 @@ class ARL(object):
     def __init__(self, config) -> None:
         # Weighing term between privacy and accuracy, higher alpha has
         # higher weight towards privacy
+        self.tag = config.get("tag") or None
         self.alpha = config["alpha"]
         self.obf_in_size = config["obf_in"]
         self.obf_out_size = config["obf_out"]
@@ -52,13 +57,24 @@ class ARL(object):
         self.noise_reg = config.get('noise_reg') or False
         self.siamese_reg = config.get('siamese_reg') or False
 
-        obf_layer_sizes = [self.obf_in_size, 10, 10, 6, self.obf_out_size]
+        # obf_layer_sizes = [self.obf_in_size, 10, 10, 6, self.obf_out_size]
+        obf_layer_sizes = [self.obf_in_size, 8, 8, self.obf_out_size]
         self.obfuscator = ReLUNet(obf_layer_sizes).cuda()
 
-        self.pred_model = MnistPredModel(self.obf_out_size).cuda()
+        self.dset = config["dset"]
+        if self.dset == "mnist":
+            self.pred_model = MnistPredModel(self.obf_out_size).cuda()
+        elif self.dset == "fmnist":
+            self.pred_model = FMnistPredModel(self.obf_out_size).cuda()
+        elif self.dset == "utkface":
+            self.pred_model = UTKPredModel(self.obf_out_size).cuda()
 
-        adv_model_params = {"channels": self.obf_out_size, "output_channels": 1,
-                            "downsampling": 0, "offset": 4}
+        if self.dset == "mnist" or self.dset == "fmnist":
+            adv_model_params = {"channels": self.obf_out_size, "output_channels": 1,
+                                "downsampling": 0, "offset": 4, "dset": self.dset}
+        else:
+            adv_model_params = {"channels": self.obf_out_size, "output_channels": 3,
+                                "downsampling": 0, "offset": 4, "dset": self.dset}
         self.adv_model = AdversaryModelGen(adv_model_params).cuda()
 
         self.pred_loss_fn = torch.nn.CrossEntropyLoss()
@@ -77,8 +93,6 @@ class ARL(object):
             self._lambda = config["lambda"]
             self.margin = config["margin"]
             self.setup_siamese_reg()
-
-        self.dset = "mnist"
 
         self.setup_vae()
         self.setup_data()
@@ -104,18 +118,54 @@ class ARL(object):
                                           self.kappa,
                                           self.schedule_length)
 
+    def cleanse_state_dict(self, state_dict):
+        """
+        This is an mismatch of expected keys, etc. Issua comes up is saved via gpu, but running on cpu, etc.
+        Ex. mismatch: keys not matching
+        Expecting: {"model.0.weight", ...}
+        Received: {"module.model.0.weight", ...}
+        """
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            new_state_dict[k[7:]] = v
+        return new_state_dict
+
     def setup_vae(self):
-        self.vae, _ = setup_vae("mnist")
-        self.vae.load_state_dict(torch.load("saved_models/mnist_beta3_vae.pt"))
+        self.vae, _ = setup_vae(self.dset)
+        if self.dset == "mnist":
+            self.vae.load_state_dict(torch.load("saved_models/mnist_beta3_vae.pt"))
+        elif self.dset == "fmnist":
+            self.vae.load_state_dict(torch.load("saved_models/fmnist_beta1_vae.pt"))
+        elif self.dset == "utkface":
+            wts = torch.load("/u/abhi24/Workspace/sanitizer/experiments/rebuttal/vae_beta0.5_age_seed15/saved_models/model_vae.pt", map_location=torch.device('cpu'))
+            wts = self.cleanse_state_dict(wts)
+            self.vae.load_state_dict(wts)
+        self.vae = self.vae.cuda()
         print("loaded vae")
 
     def setup_data(self):
         self.train_loader, self.test_loader = get_dataloader(self.dset)
 
     def assign_paths(self, lip_reg, noise_reg, siamese_reg):
-        self.base_dir = "./experiments/in_{}_out_{}_alpha_{}".format(self.obf_in_size,
-                                                                     self.obf_out_size,
-                                                                     self.alpha)
+        if self.dset == "mnist":
+            self.base_dir = "./experiments/in_{}_out_{}_alpha_{}".format(self.obf_in_size,
+                                                                        self.obf_out_size,
+                                                                        self.alpha)
+        elif self.dset == "fmnist":
+            self.base_dir = "./experiments/fmnist_in_{}_out_{}_alpha_{}".format(self.obf_in_size,
+                                                                        self.obf_out_size,
+                                                                        self.alpha)
+        elif self.dset == "utkface":
+            if self.tag:
+                self.base_dir = "./experiments/utkface_{}_in_{}_out_{}_alpha_{}".format(self.obf_in_size, self.tag,
+                                                                            self.obf_out_size,
+                                                                            self.alpha)
+            else:
+                self.base_dir = "./experiments/utkface_in_{}_out_{}_alpha_{}".format(self.obf_in_size,
+                                                                            self.obf_out_size,
+                                                                            self.alpha)
+        else:
+            print("unknown dataset {}".format(self.dset))
         if lip_reg:
             self.base_dir += "_lipreg_{}".format(self.lip_coeff)
         if noise_reg:
@@ -129,6 +179,8 @@ class ARL(object):
     def setup_path(self):
         # Should be only called when it is required to save updated models
         check_and_create_path(self.base_dir)
+        self.imgs_dir = self.base_dir + "/imgs/"
+        os.mkdir(self.imgs_dir)
 
     def save_state(self):
         torch.save(self.obfuscator.state_dict(), self.obf_path)
@@ -152,6 +204,7 @@ class ARL(object):
 
     def train(self, epoch, u_list=None, u_train=None):
         self.vae.eval()
+        self.pred_model.train()
         train_loss = 0
         if self.lip_reg:
             full_net = nn.Sequential(*(list(self.obfuscator.net)+list(self.pred_model.net)))
@@ -183,7 +236,10 @@ class ARL(object):
             data, labels = data.cuda(), labels.cuda()
             # get sample embedding from the VAE
             with torch.no_grad():
-                mu, sigma = self.vae.encode(data.view(-1, 784))
+                if self.dset in ["mnist", "fmnist"]:
+                    mu, sigma = self.vae.encode(data.view(-1, 784))
+                else:
+                    mu, sigma = self.vae.encode(data)
                 z = self.vae.reparametrize(mu, sigma)
             
             # pass it through obfuscator
@@ -199,7 +255,6 @@ class ARL(object):
             self.pred_optimizer.zero_grad()
             pred_loss.backward()
             self.pred_optimizer.step()
-
             # Train adversary model
             rec = self.adv_model(z_tilde.detach())
             rec_loss = self.rec_loss_fn(rec, data)
@@ -281,14 +336,17 @@ class ARL(object):
 
     def test(self):
         self.vae.eval()
+        self.pred_model.eval()
         test_pred_loss= 0
         test_rec_loss= 0
         pred_correct = 0
         with torch.no_grad():
             for data, labels, _ in self.test_loader:
                 data, labels = data.cuda(), labels.cuda()
-                # get sample embedding from the VAE
-                mu, sigma = self.vae.encode(data.view(-1, 784))
+                if self.dset in ["mnist", "fmnist"]:
+                    mu, sigma = self.vae.encode(data.view(-1, 784))
+                else:
+                    mu, sigma = self.vae.encode(data)
                 z = self.vae.reparametrize(mu, sigma)
 
                 # pass it through obfuscator
@@ -311,6 +369,12 @@ class ARL(object):
         test_rec_loss /= len(self.test_loader.dataset)
         final_loss = self.alpha*test_rec_loss + (1-self.alpha)*test_pred_loss
         if final_loss < self.min_final_loss:
+            if self.dset in ["mnist", "fmnist"]:
+                rec_imgs = rec.view(-1, 1, 28, 28)
+            elif self.dset == "utkface":
+                rec_imgs = rec.view(-1, 3, 64, 64)
+            save_image(rec_imgs,
+                   '{}/epoch_{}.png'.format(self.base_dir, epoch))
             self.save_state()
             self.min_final_loss = final_loss
         pred_acc = pred_correct.item() / len(self.test_loader.dataset)
@@ -318,15 +382,19 @@ class ARL(object):
 
 
 if __name__ == '__main__':
-    # TODO integrate the kappa and epsilon scheduler
-    config = {"alpha": 0.001, "obf_in": 8, "obf_out": 8,
+    config = {"alpha": 0.95,
+              "dset": "utkface", "obf_in": 10, "obf_out": 8,
               "lip_reg": False, "lip_coeff": 0.01,
-              "noise_reg": False, "sigma": 0.01,
-              "siamese_reg": True, "margin": 25 , "lambda": 100.0}
+              "noise_reg": True, "sigma": 0.01,
+              "siamese_reg": True, "margin": 25, "lambda": 1.0,
+              "tag": "gender"
+              }
+    # config = {'dset': 'mnist', 'alpha': 0.0, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 0., 'lambda': 0.0}
+    # config = {'dset': 'fmnist', 'alpha': 0.995, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True, 'sigma': 0.01, 'siamese_reg': True, 'margin': 25., 'lambda': 50.0}
     arl = ARL(config)
     arl.setup_path()
     print("starting training", config)
-    for epoch in range(1, 301):
+    for epoch in range(1, 51):
         if config["lip_reg"]:
             if epoch == 1:
                 arl.lip_reg_setup()

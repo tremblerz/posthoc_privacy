@@ -1,7 +1,3 @@
-# add calibrated noise
-# measure performance on noisy data
-# measure perfromance on original data
-import pdb
 import time
 import numpy as np
 import utils
@@ -13,7 +9,6 @@ from embedding import get_dataloader
 from torch.distributions import Laplace
 from adversarial_training import ARL
 
-from PIL import Image
 import matplotlib.pyplot as plt
 
 seed = 2
@@ -86,10 +81,7 @@ class Evaluation():
             lip_val = cross_problem.result.value
             self.logger.log_console(lip_val)
             if lip_val > self.proposed_bound:
-                # Investigate how these images look
                 rec = self.arl_obj.vae.decode(center[0].unsqueeze(0).cuda()).cpu()
-                #img = Image.fromarray(rec[0][0].detach().numpy())
-                #img.convert("L")
                 plt.imsave("./samples/ptr/{}.png".format(batch_idx), rec[0][0].detach())
                 self.logger.log_console("bot before starting")
                 unanswered_samples += 1
@@ -141,7 +133,7 @@ class Evaluation():
         self.arl_obj.pred_model.eval()
         sample_size, lip_vals = 0, []
         noisy_pred_correct, noiseless_pred_correct = 0, 0
-        for batch_idx, (data, labels, _) in enumerate(self.test_loader):
+        for batch_idx, (data, labels, _) in enumerate(self.train_loader):
             data = data.cuda()
             # get sample embedding from the VAE
             mu, log_var = self.arl_obj.vae.encode(data)#data.view(-1, 784))
@@ -176,7 +168,7 @@ class Evaluation():
         noiseless_pred_acc = noiseless_pred_correct.item() / sample_size
         self.logger.log_console('====> Noisy pred acc {:.2f}, Noiseless pred acc {:.2f}'.format(noisy_pred_acc, noiseless_pred_acc))
         self.logger.log_console('====> mean = {:.4f}, std = {:.4f}'.format(np.array(lip_vals).mean(), np.array(lip_vals).std()))
-        return np.array(lip_vals).mean()
+        return np.array(lip_vals).mean(), np.array(lip_vals).std()
 
 
 if __name__ == '__main__':
@@ -185,7 +177,7 @@ if __name__ == '__main__':
     eps = 5
     delta = 0.1
 
-    proposed_bound = 0.84
+    proposed_bound = 0.84 # gets changed during actual evaluation
     max_upper_bound_radius = 2.
     radius = 0.2
     eval_size = 100
@@ -197,7 +189,9 @@ if __name__ == '__main__':
     eval.create_logger(arl_config)
     eval.logger.log_console(arl_config)
     eval.logger.log_console(eval_config)
-    mean_lc = eval.test_local_sens()
-    #eval.proposed_bound = mean_lc + 1
-    #eval.test_ptr()
+    mean_lc, std_lc = eval.test_local_sens()
+    # The proposed bound is mean + 3 standard deviation of the local lipschitz constant obtained for
+    # training dataset. This proposed bound is used to get testing accuracy
+    eval.proposed_bound = mean_lc + 3*std_lc
+    eval.test_ptr()
 

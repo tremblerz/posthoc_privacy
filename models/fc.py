@@ -66,8 +66,4 @@ class UTKPredModel(nn.Sequential):
             nn.LeakyReLU(True),
             nn.Dropout(0.1),
             nn.Linear(10, 2),
-            # nn.BatchNorm1d(10),
-            # nn.LeakyReLU(True),
-            # nn.Dropout(0.1),
-            # nn.Linear(10, 2),
         )

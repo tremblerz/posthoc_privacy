@@ -4,8 +4,7 @@ from torch import optim, save
 from torchvision.utils import save_image
 import torch.nn as nn
 
-from models.betavae import UTKVAE, FMnistVAE, MnistVAE#, loss_function as vae_loss_fn
-from models.old_betavae import VAE, loss_function as vae_loss_fn
+from models.betavae import UTKVAE, FMnistVAE, MnistVAE, loss_function as vae_loss_fn
 
 from utils import get_dataloader
 
@@ -28,11 +27,10 @@ def setup_vae(dset):
     elif dset == "fmnist":
         vae = FMnistVAE({"nz": 8})
     elif dset == "utkface":
-        #vae = UTKVAE({"nz": 32})
-        vae = VAE({"nc": 3,"ngf": 128,"ndf": 128,"beta": 10,"nz": 10})
+        vae = UTKVAE({"nz": 10})
     else:
         print("unknown dataset", dset)
-    #init_weights(vae)
+    init_weights(vae)
     vae = vae.cuda()
     optimizer = optim.Adam(vae.parameters(), lr=1e-3)
     return vae, optimizer

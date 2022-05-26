@@ -124,7 +124,7 @@ def get_dataloader(dset, batch_size=200):
             transforms.Resize((64, 64)),
             transforms.ToTensor()])
 
-        dataset = UTKFace({"path": "/u/abhi24/Datasets/Faces/UTKFace/UTKFace/",
+        dataset = UTKFace({"path": "<add your path here>/UTKFace/",
                            "transforms": trainTransform,
                            "format": "jpg",
                            "attribute": "gender"})

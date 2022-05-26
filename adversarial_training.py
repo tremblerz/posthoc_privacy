@@ -1,8 +1,6 @@
 from collections import OrderedDict
 from distutils.command.config import config
 import os
-import pdb
-import pickle
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,8 +16,6 @@ from embedding import get_dataloader
 
 from models.gen import AdversaryModelGen
 from lipmip.relu_nets import ReLUNet
-
-from lip_reg import net_Local_Lip, robust_loss
 
 
 class ContrastiveLoss(_Loss):
@@ -53,7 +49,6 @@ class ARL(object):
         self.obf_in_size = config["obf_in"]
         self.obf_out_size = config["obf_out"]
 
-        self.lip_reg = config.get('lip_reg') or False
         self.noise_reg = config.get('noise_reg') or False
         self.siamese_reg = config.get('siamese_reg') or False
 
@@ -86,9 +81,6 @@ class ARL(object):
 
         if self.noise_reg:
             self.sigma = config["sigma"]
-        if self.lip_reg:
-            self.lip_coeff = config["lip_coeff"]
-            self.setup_lip_reg()
         if self.siamese_reg:
             self._lambda = config["lambda"]
             self.margin = config["margin"]
@@ -98,25 +90,10 @@ class ARL(object):
         self.setup_data()
 
         self.min_final_loss = np.inf
-        self.assign_paths(self.lip_reg, self.noise_reg, self.siamese_reg)
+        self.assign_paths(self.noise_reg, self.siamese_reg)
 
     def setup_siamese_reg(self):
         self.contrastive_loss = ContrastiveLoss(self.margin)
-
-    def setup_lip_reg(self):
-        self.warmup = 5
-        self.starting_epsilon = 0.0
-        self.epsilon_train = 1.58
-        self.kappa = 0.0
-        self.schedule_length = 300
-        self.starting_kappa = 1.0
-        self.eps_schedule = np.linspace(self.starting_epsilon,
-                                        self.epsilon_train,
-                                        self.schedule_length)
-
-        self.kappa_schedule = np.linspace(self.starting_kappa,
-                                          self.kappa,
-                                          self.schedule_length)
 
     def cleanse_state_dict(self, state_dict):
         """
@@ -137,7 +114,7 @@ class ARL(object):
         elif self.dset == "fmnist":
             self.vae.load_state_dict(torch.load("saved_models/fmnist_beta1_vae.pt"))
         elif self.dset == "utkface":
-            wts = torch.load("/u/abhi24/Workspace/sanitizer/experiments/rebuttal/vae_beta0.5_age_seed15/saved_models/model_vae.pt", map_location=torch.device('cpu'))
+            wts = torch.load("saved_models/utkface_beta5_vae.pt", map_location=torch.device('cpu'))
             wts = self.cleanse_state_dict(wts)
             self.vae.load_state_dict(wts)
         self.vae = self.vae.cuda()
@@ -166,8 +143,6 @@ class ARL(object):
                                                                             self.alpha)
         else:
             print("unknown dataset {}".format(self.dset))
-        if lip_reg:
-            self.base_dir += "_lipreg_{}".format(self.lip_coeff)
         if noise_reg:
             self.base_dir += "_noisereg_{}".format(self.sigma)
         if siamese_reg:
@@ -202,33 +177,10 @@ class ARL(object):
         noise_dist = torch.distributions.Laplace(torch.zeros_like(z), self.sigma)
         return noise_dist.sample()
 
-    def train(self, epoch, u_list=None, u_train=None):
+    def train(self):
         self.vae.eval()
         self.pred_model.train()
         train_loss = 0
-        if self.lip_reg:
-            full_net = nn.Sequential(*(list(self.obfuscator.net)+list(self.pred_model.net)))
-            net_local = net_Local_Lip(full_net)
-            sniter, opt_iter = 5, 10
-            if epoch < self.warmup:
-                epsilon = 0
-                epsilon_next = 0
-            elif self.warmup <= epoch < self.warmup+len(self.eps_schedule) and self.starting_epsilon is not None:
-                epsilon = float(self.eps_schedule[epoch-self.warmup])
-                epsilon_next = float(self.eps_schedule[np.min((epoch+1-self.warmup, len(self.eps_schedule)-1))])
-            else:
-                epsilon = self.epsilon_train
-                epsilon_next = self.epsilon_train
-
-            if epoch < self.warmup:
-                kappa = 1
-                kappa_next = 1
-            elif self.warmup <= epoch < self.warmup+len(self.kappa_schedule):
-                kappa = float(self.kappa_schedule[epoch-self.warmup])
-                kappa_next = float(self.kappa_schedule[np.min((epoch+1-self.warmup, len(self.kappa_schedule)-1))])
-            else:
-                kappa = self.kappa
-                kappa_next = self.kappa
 
         # Start training
         for batch_idx, (data, labels, idx) in enumerate(self.train_loader):
@@ -262,25 +214,6 @@ class ARL(object):
             rec_loss.backward()
             self.adv_optimizer.step()
 
-            if self.lip_reg:
-                # Lipschitz regularization
-                epsilon1 = epsilon+batch_idx/len(self.train_loader)*(epsilon-self.starting_epsilon)/self.schedule_length
-                kappa1 = kappa+batch_idx/len(self.train_loader)*(kappa-self.starting_kappa)/self.schedule_length
-                # extract singular vector for each data point
-                u_train_data = []
-                for ll in range(len(u_train)):
-                    if u_train[ll] is not None:
-                        u_train_data.append(u_train[ll][idx,:].cuda())
-                    else:
-                        u_train_data.append(None)
-
-                # robust loss
-                local_loss, local_err, u_list, u_train_idx = robust_loss(net_local, epsilon1, z, labels, u_list, u_train_data,
-                                                                        sniter, opt_iter, gloro=True)
-                for ll in range(len(u_train)):
-                    if u_train_idx[ll] is not None:
-                        u_train[ll][idx,:] = u_train_idx[ll].clone().detach().cpu()
-
             # Train obfuscator model by maximizing reconstruction loss
             # and minimizing prediction loss
             z_tilde = self.obfuscator(z)
@@ -294,8 +227,6 @@ class ARL(object):
                 siamese_loss = self.contrastive_loss(z, labels)
 
             self.obf_optimizer.zero_grad()
-            if self.lip_reg:
-                total_loss += self.lip_coeff*(1-kappa1)*local_loss
             if self.siamese_reg:
                 total_loss += self._lambda*siamese_loss
             total_loss.backward()
@@ -308,31 +239,6 @@ class ARL(object):
                     epoch, batch_idx * len(data), len(self.train_loader.dataset),
                     100. * batch_idx / len(self.train_loader), total_loss.item() / len(data), pred_loss.item(), rec_loss.item()))
         print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(self.train_loader.dataset)))
-        if self.lip_reg:
-            return u_list, u_train
-        else:
-            return None
-
-    def lip_reg_setup(self):
-        # compute the feature size at each layer
-        model = nn.Sequential(*(list(self.obfuscator.net)+list(self.pred_model.net)))
-        input_size = []
-        depth = len(model)
-        x = torch.randn(1, 8).cuda()
-        for i, layer in enumerate(model.children()):
-            if i < depth-1:
-                input_size.append(x.size()[1:])
-                x = layer(x)
-
-        # create u on cpu to store singular vector for every input at every layer
-        self.u_train = []
-
-        for i in range(len(input_size)):
-            print(i)
-            if not model[i].__class__.__name__=='Flatten' and not isinstance(model[i], nn.ReLU):
-                self.u_train.append(torch.randn((len(self.train_loader.dataset), *(input_size[i])), pin_memory=True))
-            else:
-                self.u_train.append(None)
 
     def test(self):
         self.vae.eval()
@@ -382,25 +288,15 @@ class ARL(object):
 
 
 if __name__ == '__main__':
-    config = {"alpha": 0.95,
+    config = {"alpha": 0.99,
               "dset": "utkface", "obf_in": 10, "obf_out": 8,
-              "lip_reg": False, "lip_coeff": 0.01,
               "noise_reg": True, "sigma": 0.01,
               "siamese_reg": True, "margin": 25, "lambda": 1.0,
               "tag": "gender"
               }
-    # config = {'dset': 'mnist', 'alpha': 0.0, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 0., 'lambda': 0.0}
-    # config = {'dset': 'fmnist', 'alpha': 0.995, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True, 'sigma': 0.01, 'siamese_reg': True, 'margin': 25., 'lambda': 50.0}
     arl = ARL(config)
     arl.setup_path()
     print("starting training", config)
     for epoch in range(1, 51):
-        if config["lip_reg"]:
-            if epoch == 1:
-                arl.lip_reg_setup()
-                u_train = arl.u_train
-                u_list = None
-            u_list, u_train = arl.train(epoch, u_list, u_train)
-        else:
-            arl.train(epoch)
+        arl.train()
         arl.test()

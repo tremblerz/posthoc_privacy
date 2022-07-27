@@ -20,15 +20,21 @@ def add_noise(eps_list, z, sens):
     return z + Laplace(torch.zeros_like(z), scale).sample()
 
 
-def multi_eps():
+def multi_eps(ldp=False):
 
+    # LDP
+    ldp = True
+    arl_config = {'dset': 'mnist', 'alpha': 0.0, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 0., 'lambda': 0.0}
+    # arl_config = {'dset': 'fmnist', 'alpha': 0.0, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 25., 'lambda': 50.0}
+    # arl_config = {'alpha': 0.00, 'tag': 'gender', 'dset': 'utkface', 'obf_in': 10, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 25, 'lambda': 25.0}
+    
     # Encoder
     # proposed_bound = 1.5
     # arl_config = {'dset': 'mnist', 'alpha': 0.0, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 0., 'lambda': 0.0}
     # proposed_bound = 2.5
     # arl_config = {'dset': 'fmnist', 'alpha': 0.0, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 25., 'lambda': 50.0}
-    proposed_bound = 0.94
-    arl_config = {'alpha': 0.00, 'tag': 'gender', 'dset': 'utkface', 'obf_in': 10, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 25, 'lambda': 25.0}
+    # proposed_bound = 0.94
+    # arl_config = {'alpha': 0.00, 'tag': 'gender', 'dset': 'utkface', 'obf_in': 10, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 25, 'lambda': 25.0}
 
     # ARL
     # proposed_bound = 0.9
@@ -90,7 +96,28 @@ def multi_eps():
     arl_obj.load_state()
     arl_obj.vae.eval()
     arl_obj.pred_model.eval()
+    if ldp:
+        z_max = [-torch.inf]*shape
+        z_min = [torch.inf]*shape
+        for ind, data, labels, _ in enumerate(arl_obj.train_loader):
+            data, labels = data.cuda(), labels.cuda()
+            z, _ = arl_obj.vae.encode(data)#.view(-1, 784))
+            z_tilde = arl_obj.obfuscator(z)
+            for component in range(z_tilde.shape[1]):
+                max_val = torch.max(z_tilde[:, component])
+                min_val = torch.min(z_tilde[:, component])
+                if z_max[component] < max_val:
+                    z_max[component] = max_val
+                if z_min[component] > min_val:
+                    z_min[component] = min_val
+            if ind > 10:
+                break
+        proposed_bound = max(z_max - z_min)
+        print("proposed bound is", proposed_bound)
+
     radius, num_samples = 0.3, 0
+    if ldp:
+        radius = 1
     eps_list = [0.1, 2, 5, 10, torch.inf]
     effective_eps_list = torch.tensor([eps / radius for eps in eps_list]).cuda()
     noisy_pred_correct = torch.zeros(len(eps_list)).cuda()

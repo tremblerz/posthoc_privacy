@@ -84,17 +84,6 @@ class UTKFace(BaseDataset):
         return label
 
 
-class MyDataset(Dataset):
-    def __init__(self, trainset):
-        self.set = trainset
-
-    def __getitem__(self, index):
-        data, target = self.set[index]
-        return data, target, index
-
-    def __len__(self):
-        return len(self.set)
-
 def get_split(train_split, dataset):
 
     dataset_size = len(dataset)
@@ -108,7 +97,7 @@ def get_split(train_split, dataset):
     return train_dataset, test_dataset
 
 
-def get_dataloader(dset, batch_size=200):
+def get_dataloader(dset, batch_size=64):
 
     if dset == 'mnist':
         # MNIST Dataset
@@ -131,9 +120,6 @@ def get_dataloader(dset, batch_size=200):
         train_dataset, test_dataset = get_split(0.8, dataset)
     else:
         print("dataset {} not implemented".format(dset))
-
-    train_dataset = MyDataset(train_dataset)
-    test_dataset = MyDataset(test_dataset)
 
     # Data Loader (Input Pipeline)
     train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)

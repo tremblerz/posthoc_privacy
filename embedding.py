@@ -24,15 +24,16 @@ def init_weights(vae):
 def setup_vae(dset):
     print(dset)
     if dset == "mnist":
-        vae = MnistVAE({"nz": 8})
+        vae = MnistVAE({"nz": 25})
     elif dset == "fmnist":
-        vae = FMnistVAE({"nz": 8})
+        vae = FMnistVAE({"nz": 25})
     elif dset == "utkface":
-        #vae = UTKVAE({"nz": 32})
-        vae = VAE({"nc": 3,"ngf": 128,"ndf": 128,"beta": 10,"nz": 10})
+        # vae = UTKVAE({"nz": 512})
+        vae = VAE({"nc": 3, "ngf": 128, "ndf": 128, "beta": 0, "nz": 512})
     else:
         print("unknown dataset", dset)
     #init_weights(vae)
+    print("initialized VAE model")
     vae = vae.cuda()
     optimizer = optim.Adam(vae.parameters(), lr=1e-3)
     return vae, optimizer
@@ -40,7 +41,7 @@ def setup_vae(dset):
 def train(vae, train_loader, optimizer, beta, epoch):
     vae.train()
     train_loss = 0
-    for batch_idx, (data, _, _) in enumerate(train_loader):
+    for batch_idx, (data, _) in enumerate(train_loader):
         data = data.cuda()
         optimizer.zero_grad()
         recon_batch, mu, log_var, z = vae(data)
@@ -60,7 +61,7 @@ def test(vae, test_loader, beta, epoch, model_name, dset):
     vae.eval()
     test_loss= 0
     with torch.no_grad():
-        for data, _, _ in test_loader:
+        for data, _ in test_loader:
             data = data.cuda()
             recon, mu, log_var, z = vae(data)
             
@@ -73,7 +74,7 @@ def test(vae, test_loader, beta, epoch, model_name, dset):
             save_image(sample.view(-1, 1, 28, 28),
                    './samples/training/{}/epoch_{}.png'.format(model_name, epoch))
         elif dset == "utkface":
-            save_image(sample.view(-1, 3, 64, 64),
+            save_image(sample.view(-1, 3, 32, 32),
                    './samples/training/{}/epoch_{}.png'.format(model_name, epoch))
         else:
             print("unknown dataset {} to save samples".format(dset))
@@ -87,14 +88,14 @@ def save_model(vae, model_name):
 
 def train_vae():
     global min_test_loss
-    dset, beta = "fmnist", 1
+    dset, beta = "utkface", 0
     model_name = "{}_beta{}_vae".format(dset, beta)
     samples_dir = "./samples/training/{}".format(model_name)
     if not os.path.isdir(samples_dir):
         os.makedirs(samples_dir)
     train_loader, test_loader = get_dataloader(dset)
     vae, optimizer = setup_vae(dset)
-    for epoch in range(1, 101):
+    for epoch in range(1, 201):
         train(vae, train_loader, optimizer, beta, epoch)
         loss_ = test(vae, test_loader, beta, epoch, model_name, dset)
         if loss_ < min_test_loss:

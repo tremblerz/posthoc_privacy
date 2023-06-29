@@ -12,10 +12,10 @@ def loss_function(recon_x, x, mu, logvar, beta):
     # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
     # https://arxiv.org/abs/1312.6114
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-    klds = -0.5*(1 + logvar - mu.pow(2) - logvar.exp())
-    kld_loss = klds.sum(1).mean(0, True)
-    loss = recons_loss + beta * kld_loss
-    return loss.mean(), recons_loss, kld_loss
+    # klds = -0.5*(1 + logvar - mu.pow(2) - logvar.exp())
+    # kld_loss = klds.sum(1).mean(0, True)
+    loss = recons_loss# + beta * kld_loss
+    return loss.mean(), recons_loss, None
 
 
 class VAE(nn.Module):
@@ -35,12 +35,12 @@ class VAE(nn.Module):
             # nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
             # nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf) x 64 x 64
-            nn.Conv2d(nc, ndf * 2, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ndf * 2),
-            nn.LeakyReLU(0.2, inplace=True),
+            # nn.Conv2d(nc, ndf * 2, 4, 2, 1, bias=False),
+            # nn.BatchNorm2d(ndf * 2),
+            # nn.LeakyReLU(0.2, inplace=True),
             #################
             # 32x32
-            nn.Conv2d(ndf * 2, ndf * 2, 4, 2, 1, bias=False),
+            nn.Conv2d(nc, ndf * 2, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
             ###############
@@ -77,9 +77,9 @@ class VAE(nn.Module):
             nn.BatchNorm2d(ngf * 2),
             nn.LeakyReLU(True),
             #####################
-            nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf),
-            nn.LeakyReLU(True),
+            # nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
+            # nn.BatchNorm2d(ngf),
+            # nn.LeakyReLU(True),
             # state size. (ngf*2) x 16 x 16
             #nn.ConvTranspose2d(ngf * 2, nc, 3, 2, 2, bias=False),
             # nn.BatchNorm2d(ngf),
@@ -87,8 +87,8 @@ class VAE(nn.Module):
             # state size. (ngf) x 32 x 32
             # nn.ConvTranspose2d(    ngf,      nc, 4, 2, 1, bias=False),
             # nn.Tanh()
-            nn.Conv2d(ngf, nc, 4, 1, 0, bias=False),
-            nn.Conv2d(nc, nc, 2, 1, 0, bias=False),
+            nn.Conv2d(ngf * 2, nc, 3, 1, 1, bias=False),
+            nn.Conv2d(nc, nc, 3, 1, 0, bias=False),
             nn.Sigmoid()
             # state size. (nc) x 64 x 64
         )
@@ -115,13 +115,12 @@ class VAE(nn.Module):
         deconv_input = self.fc4(h3)
         # print("deconv_input", deconv_input.size())
         deconv_input = deconv_input.view(-1, 256, 1, 1)
-        # print("deconv_input", deconv_input.size())
         return self.decoder(deconv_input)
 
     def reparametrize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return eps * std + mu
+        # std = torch.exp(0.5 * logvar)
+        # eps = torch.randn_like(std)
+        return mu #eps * std + mu
 
     def forward(self, x):
         # print("x", x.size())

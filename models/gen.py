@@ -160,15 +160,15 @@ class AdversaryModelGen(nn.Module):
                                            padding=1, output_padding=1, bias=use_bias),
                         norm_layer(16), nn.ReLU(True),
                         # Bx16x16x16
-                        nn.ConvTranspose2d(16, 8,
-                                           kernel_size=3, stride=2,
-                                           padding=1, output_padding=1, bias=use_bias),
-                        norm_layer(8), nn.ReLU(True),
-                        # Bx8x32x32
-                        nn.ConvTranspose2d(8, 3,
+                        nn.ConvTranspose2d(16, 3,
                                            kernel_size=3, stride=2,
                                            padding=1, output_padding=1, bias=use_bias),
                         norm_layer(3), nn.ReLU(True),
+                        # Bx8x32x32
+                        #nn.ConvTranspose2d(8, 3,
+                        #                   kernel_size=3, stride=2,
+                        #                   padding=1, output_padding=1, bias=use_bias),
+                        #norm_layer(3), nn.ReLU(True),
                         # Bx3x64x64
                         nn.Conv2d(3, 3, 3, 1, 1)
                         # Bx3x64x64

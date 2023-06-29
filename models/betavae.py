@@ -115,13 +115,8 @@ class UTKVAE(BaseVAE):
         self.nz = hparams["nz"]
 
         self.encoder = nn.Sequential(
-            # state size. 3 x 64 x 64
-            nn.Conv2d(3, 64, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2, inplace=True),
-            #################
-            # 32x32
-            nn.Conv2d(64, 128, 4, 2, 1, bias=False),
+            # state size. 3 x 32 x 32
+            nn.Conv2d(3, 128, 4, 2, 1, bias=False),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2, inplace=True),
             ###############
@@ -135,16 +130,16 @@ class UTKVAE(BaseVAE):
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. 256 x 4 x 4
-            nn.Conv2d(256, 256, 4, 1, 0, bias=False),
-            # nn.BatchNorm2d(256),
+            nn.Conv2d(256, 512, 4, 1, 0, bias=False),
+            # nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Flatten()
-            # state size. 256
+            # state size. 512
         )
 
         self.decoder = nn.Sequential(
             # input is Z, going into a convolution
-            nn.ConvTranspose2d(256, 128, 4, 1, 0, bias=False),
+            nn.ConvTranspose2d(512, 128, 4, 1, 0, bias=False),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(True),
             # state size. 128 x 4 x 4
@@ -160,28 +155,21 @@ class UTKVAE(BaseVAE):
             nn.BatchNorm2d(32),
             nn.LeakyReLU(True),
             # state size. 32 x 16 x 16
-            nn.ConvTranspose2d(32, 16, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(16),
+            nn.ConvTranspose2d(32, 3, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(3),
             nn.LeakyReLU(True),
-            # state size. 16 x 32 x 32
-            nn.ConvTranspose2d(16, 8, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(8),
-            nn.LeakyReLU(True),
-            # state size. 8 x 64 x 64
-            nn.Conv2d(8, 3, 3, 1, 1, bias=False),
+            # state size. 3 x 32 x 32
             nn.Sigmoid()
-            # state size. 3 x 64 x 64
         )
 
         self._fc_downscale = nn.Sequential(
             # state size. 256
-            nn.Linear(256, 2*self.nz)
+            nn.Linear(512, 2*self.nz)
         )
 
         self._fc_upscale = nn.Sequential(
             # state size. nz
-            nn.Linear(self.nz, 128),
-            nn.Linear(128, 256),
+            nn.Linear(self.nz, 512),
             Vec2Vol()
         )
         self._mu_net = nn.Linear(self.nz, self.nz)

@@ -21,6 +21,8 @@ torch.manual_seed(seed)
 random.seed(seed)
 np.random.seed(seed)
 
+DP_FLAG=True
+
 
 class Evaluation():
     def __init__(self, arl_obj: ARL, config) -> None:
@@ -33,7 +35,7 @@ class Evaluation():
         self.arl_obj = arl_obj
 
         self.max_time = 20 # seconds
-        self.margin = 0.001
+        self.margin = 0.01
 
         # For now we are using center of 0 and l_inf norm of size 1 around the center to define the output space
         self.out_domain = 'l1Ball1'
@@ -71,69 +73,84 @@ class Evaluation():
         self.arl_obj.pred_model.eval()
         sample_size, unanswered_samples = 0, 0
         noisy_pred_correct, noiseless_pred_correct = 0, 0
+        overall_time = []
         for batch_idx, (data, labels, _) in enumerate(self.test_loader):
             data = data.cuda()
-            mu, log_var = self.arl_obj.vae.encode(data.view(-1, 784))
+            overall_start_time = time.perf_counter()
+            mu, log_var = self.arl_obj.vae.encode(data)#.view(-1, 784))
             center = self.arl_obj.vae.reparametrize(mu, log_var).cpu()
+            if not DP_FLAG:
+                lower_bound_s = self.radius
+                upper_bound_s = self.max_upper_bound_radius
 
-            lower_bound_s = self.radius
-            upper_bound_s = self.max_upper_bound_radius
-
-            simple_domain = Hyperbox.build_linf_ball(center[0], lower_bound_s)
-            cross_problem = LipMIP(self.arl_obj.obfuscator.cpu(), simple_domain,
-                                   'l1Ball1', num_threads=8, verbose=True)
-            cross_problem.compute_max_lipschitz()
-            lip_val = cross_problem.result.value
-            self.logger.log_console(lip_val)
-            if lip_val > self.proposed_bound:
-                # Investigate how these images look
-                rec = self.arl_obj.vae.decode(center[0].unsqueeze(0).cuda()).cpu()
-                #img = Image.fromarray(rec[0][0].detach().numpy())
-                #img.convert("L")
-                plt.imsave("./samples/ptr/{}.png".format(batch_idx), rec[0][0].detach())
-                self.logger.log_console("bot before starting")
-                unanswered_samples += 1
-            else:
-                start_time = time.perf_counter()
-                while upper_bound_s >= lower_bound_s + self.margin:
-                    radius = (lower_bound_s + upper_bound_s) / 2
-                    simple_domain = Hyperbox.build_linf_ball(center[0], radius)
-                    cross_problem = LipMIP(self.arl_obj.obfuscator.cpu(), simple_domain,
-                                        'l1Ball1', num_threads=8, verbose=False)
-                    cross_problem.compute_max_lipschitz()
-                    lip_val = cross_problem.result.value
-                    if self.proposed_bound > lip_val:
-                        lower_bound_s = radius
-                    else:
-                        upper_bound_s = radius
-                    time_elapsed = time.perf_counter() - start_time
-                    if time_elapsed > self.max_time:
-                        self.logger.log_console("timeout")
-                        break
-                # Dividing by 2 because that's the actual lower bound as shown in the paper
-                real_lower_bound_s = lower_bound_s / 2
-                noisy_lower_bound_s = real_lower_bound_s + self.get_noise(torch.zeros(1), self.radius)
-                if noisy_lower_bound_s < np.log(1 / self.delta) * (self.radius / self.epsilon):
-                    self.logger.log_console("bot {:.4f}".format(noisy_lower_bound_s.item()))
+                simple_domain = Hyperbox.build_linf_ball(center[0], lower_bound_s)
+                cross_problem = LipMIP(self.arl_obj.obfuscator.cpu(), simple_domain,
+                                    'l1Ball1', num_threads=8, verbose=True)
+                cross_problem.compute_max_lipschitz()
+                lip_val = cross_problem.result.value
+                self.logger.log_console(lip_val)
+                if lip_val > self.proposed_bound:
+                    # Investigate how these images look
+                    rec = self.arl_obj.vae.decode(center[0].unsqueeze(0).cuda()).cpu()
+                    #img = Image.fromarray(rec[0][0].detach().numpy())
+                    #img.convert("L")
+                    plt.imsave("./samples/ptr/{}.png".format(batch_idx), rec[0][0].detach())
+                    self.logger.log_console("bot before starting")
                     unanswered_samples += 1
                 else:
-                    # pass it through obfuscator
-                    z_tilde = self.arl_obj.obfuscator(center)
-                    # This is not private yet since the noise added is based on private data
-                    # TODO: Switch to PTR version
-                    z_hat = z_tilde + self.get_noise(z_tilde, lip_val)
-                    # pass obfuscated z through pred_model
-                    noisy_preds = self.arl_obj.pred_model(z_hat)
-                    noisy_pred_correct += (noisy_preds.argmax(dim=1) == labels).sum()
+                    start_time = time.perf_counter()
+                    while upper_bound_s >= lower_bound_s + self.margin:
+                        radius = (lower_bound_s + upper_bound_s) / 2
+                        simple_domain = Hyperbox.build_linf_ball(center[0], radius)
+                        cross_problem = LipMIP(self.arl_obj.obfuscator.cpu(), simple_domain,
+                                            'l1Ball1', num_threads=8, verbose=False)
+                        cross_problem.compute_max_lipschitz()
+                        lip_val = cross_problem.result.value
+                        if self.proposed_bound > lip_val:
+                            lower_bound_s = radius
+                        else:
+                            upper_bound_s = radius
+                        time_elapsed = time.perf_counter() - start_time
+                        if time_elapsed > self.max_time:
+                            self.logger.log_console("timeout")
+                            break
+                    # Dividing by 2 because that's the actual lower bound as shown in the paper
+                    real_lower_bound_s = lower_bound_s / 2
+                    noisy_lower_bound_s = real_lower_bound_s + self.get_noise(torch.zeros(1), self.radius)
+                    if noisy_lower_bound_s < np.log(1 / self.delta) * (self.radius / self.epsilon):
+                        self.logger.log_console("bot {:.4f}".format(noisy_lower_bound_s.item()))
+                        unanswered_samples += 1
+                    else:
+                        overall_end_time = time.perf_counter()
+                        overall_time.append(overall_end_time - overall_start_time)
+                        # pass it through obfuscator
+                        z_tilde = self.arl_obj.obfuscator(center)
+                        # This is not private yet since the noise added is based on private data
+                        # TODO: Switch to PTR version
+                        z_hat = z_tilde + self.get_noise(z_tilde, lip_val)
+                        # pass obfuscated z through pred_model
+                        noisy_preds = self.arl_obj.pred_model(z_hat)
+                        noisy_pred_correct += (noisy_preds.argmax(dim=1) == labels).sum()
 
-                    noiseless_preds = self.arl_obj.pred_model(z_tilde)
-                    noiseless_pred_correct += (noiseless_preds.argmax(dim=1) == labels).sum()
-                    sample_size += 1
-            if unanswered_samples + sample_size > self.eval_size:
-                break
-        assert sample_size + unanswered_samples - 1 == batch_idx
-        noisy_pred_acc = noisy_pred_correct.item() / sample_size
-        noiseless_pred_acc = noiseless_pred_correct.item() / sample_size
+                        noiseless_preds = self.arl_obj.pred_model(z_tilde)
+                        noiseless_pred_correct += (noiseless_preds.argmax(dim=1) == labels).sum()
+                        sample_size += 1
+                if unanswered_samples + sample_size > self.eval_size:
+                    break
+            else:
+                lip_val = 100.
+                self.get_noise(center, lip_val)
+                overall_end_time = time.perf_counter()
+                z_tilde = self.arl_obj.obfuscator(center)
+                overall_time.append(overall_end_time - overall_start_time)
+                
+        
+        # Because batch size is 1, batch_idx should be length of the dataset
+        # assert sample_size + unanswered_samples - 1 == batch_idx
+        overall_time = np.array(overall_time)
+        self.logger.log_console('runtime mean {:.4f} std {:.4f}'.format(overall_time.mean(), overall_time.std()))
+        # noisy_pred_acc = noisy_pred_correct.item() / sample_size
+        # noiseless_pred_acc = noiseless_pred_correct.item() / sample_size
         self.logger.log_console('====> Unanswered_samples {}/{}, Noisy pred acc {:.2f}, Noiseless pred acc {:.2f}'.format(unanswered_samples, batch_idx, noisy_pred_acc, noiseless_pred_acc))
 
     def test_local_sens(self):
@@ -176,18 +193,23 @@ class Evaluation():
         noiseless_pred_acc = noiseless_pred_correct.item() / sample_size
         self.logger.log_console('====> Noisy pred acc {:.2f}, Noiseless pred acc {:.2f}'.format(noisy_pred_acc, noiseless_pred_acc))
         self.logger.log_console('====> mean = {:.4f}, std = {:.4f}'.format(np.array(lip_vals).mean(), np.array(lip_vals).std()))
-        return np.array(lip_vals).mean()
+        return np.array(lip_vals).mean(), np.array(lip_vals).std()
 
 
 if __name__ == '__main__':
-    arl_config = {'tag': 'gender', 'alpha': 0.0, 'dset': 'utkface', 'obf_in': 10, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True, 'sigma': 0.05, 'siamese_reg': False, 'margin': 25, 'lambda': 25.0}
+    # arl_config = {'alpha': 0.95, 'tag': 'gender', 'dset': 'utkface', 'obf_in': 10,
+    #              'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True,
+    #              'sigma': 0.01, 'siamese_reg': True, 'margin': 25, 'lambda': 1.0}
+    arl_config = {'alpha': 0.995, 'dset': 'mnist', 'obf_in': 25, 'obf_out': 15,
+                  'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False,
+                  'sigma': 0.01, 'siamese_reg': False, 'margin': 25, 'lambda': 100.0}
 
     eps = 5
     delta = 0.1
 
     proposed_bound = 0.84
-    max_upper_bound_radius = 2.
-    radius = 0.2
+    max_upper_bound_radius = 1.4
+    radius = 0.1
     eval_size = 100
     eval_config = {"epsilon": eps, "delta": delta, "radius": radius, "eval_size": eval_size,
                    "proposed_bound": proposed_bound, "max_upper_bound": max_upper_bound_radius}
@@ -197,7 +219,7 @@ if __name__ == '__main__':
     eval.create_logger(arl_config)
     eval.logger.log_console(arl_config)
     eval.logger.log_console(eval_config)
-    mean_lc = eval.test_local_sens()
-    #eval.proposed_bound = mean_lc + 1
-    #eval.test_ptr()
+    mean_lc, std_lc = eval.test_local_sens()
+    eval.proposed_bound = mean_lc + 3 * std_lc
+    eval.test_ptr()
 

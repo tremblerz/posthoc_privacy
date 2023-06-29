@@ -97,7 +97,7 @@ def get_split(train_split, dataset):
     return train_dataset, test_dataset
 
 
-def get_dataloader(dset, batch_size=64):
+def get_dataloader(dset, batch_size=128):
 
     if dset == 'mnist':
         # MNIST Dataset
@@ -110,7 +110,7 @@ def get_dataloader(dset, batch_size=64):
     elif dset == 'utkface':
         # UTKFace Dataset
         trainTransform = transforms.Compose([
-            transforms.Resize((64, 64)),
+            transforms.Resize((32, 32)),
             transforms.ToTensor()])
 
         dataset = UTKFace({"path": "/u/abhi24/Datasets/Faces/UTKFace/UTKFace/",

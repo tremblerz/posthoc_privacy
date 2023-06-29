@@ -20,11 +20,11 @@ def add_noise(eps_list, z, sens):
     return z + Laplace(torch.zeros_like(z), scale).sample()
 
 
-def multi_eps(ldp=False):
+def multi_eps(radius=0.1, ldp=False):
 
     # LDP
-    ldp = True
-    arl_config = {'dset': 'mnist', 'alpha': 0.0, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 0., 'lambda': 0.0}
+    # ldp = False
+    # arl_config = {'dset': 'mnist', 'alpha': 0.0, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 0., 'lambda': 0.0}
     # arl_config = {'dset': 'fmnist', 'alpha': 0.0, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 25., 'lambda': 50.0}
     # arl_config = {'alpha': 0.00, 'tag': 'gender', 'dset': 'utkface', 'obf_in': 10, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False, 'sigma': 0.01, 'siamese_reg': False, 'margin': 25, 'lambda': 25.0}
     
@@ -85,8 +85,8 @@ def multi_eps(ldp=False):
     # arl_config = {'alpha': 0.0, 'tag': 'gender', 'dset': 'utkface', 'obf_in': 10, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True, 'sigma': 0.01, 'siamese_reg': True, 'margin': 25, 'lambda': 25.0}
 
     # ARL-CN
-    # proposed_bound = 0.8
-    # arl_config = {'alpha': 0.99, 'dset': 'mnist', 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True, 'sigma': 0.01, 'siamese_reg': True, 'margin': 25, 'lambda': 100.0}
+    proposed_bound = 0.8
+    arl_config = {'alpha': 0.99, 'dset': 'mnist', 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True, 'sigma': 0.01, 'siamese_reg': True, 'margin': 25, 'lambda': 100.0}
     # proposed_bound = 0.3
     # arl_config = {'dset': 'fmnist', 'alpha': 0.995, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True, 'sigma': 0.01, 'siamese_reg': True, 'margin': 25., 'lambda': 50.0}
     # proposed_bound = 0.56
@@ -97,31 +97,40 @@ def multi_eps(ldp=False):
     arl_obj.vae.eval()
     arl_obj.pred_model.eval()
     if ldp:
-        z_max = [-torch.inf]*shape
-        z_min = [torch.inf]*shape
-        for ind, data, labels, _ in enumerate(arl_obj.train_loader):
-            data, labels = data.cuda(), labels.cuda()
-            z, _ = arl_obj.vae.encode(data)#.view(-1, 784))
-            z_tilde = arl_obj.obfuscator(z)
-            for component in range(z_tilde.shape[1]):
-                max_val = torch.max(z_tilde[:, component])
-                min_val = torch.min(z_tilde[:, component])
-                if z_max[component] < max_val:
-                    z_max[component] = max_val
-                if z_min[component] > min_val:
-                    z_min[component] = min_val
-            if ind > 10:
-                break
-        proposed_bound = max(z_max - z_min)
+        # Essentially, the following piece of code computes the range of the data that
+        # will be shared with the server. Then the sensitivity is computed by calculating
+        # the overall range. While we only use 10000 batches, it is a reasonable number and the
+        # evaluation is on the test set therefore no private information is leaked by computing the range
+        # on the training set.
+        size = arl_config["obf_out"]
+        z_max = [-torch.inf]*size
+        z_min = [torch.inf]*size
+        with torch.no_grad():
+            for ind, (data, labels, _) in enumerate(arl_obj.train_loader):
+                data, labels = data.cuda(), labels.cuda()
+                z, _ = arl_obj.vae.encode(data)#.view(-1, 784))
+                z_tilde = arl_obj.obfuscator(z)
+                for component in range(z_tilde.shape[1]):
+                    max_val = torch.max(z_tilde[:, component])
+                    min_val = torch.min(z_tilde[:, component])
+                    if z_max[component] < max_val:
+                        z_max[component] = max_val
+                    if z_min[component] > min_val:
+                        z_min[component] = min_val
+                if ind > 1000:
+                    break
+        proposed_bound = max(torch.tensor(z_max)) - min(torch.tensor(z_min))
         print("proposed bound is", proposed_bound)
 
-    radius, num_samples = 0.3, 0
+    num_samples = 0
     if ldp:
+        # for LDP, radius parameter is the exactly same as group size in the group privacy definition
+        # which is typically kept as 1
         radius = 1
-    eps_list = [0.1, 2, 5, 10, torch.inf]
+    eps_list = [1, 2, 5, 10, torch.inf]
     effective_eps_list = torch.tensor([eps / radius for eps in eps_list]).cuda()
     noisy_pred_correct = torch.zeros(len(eps_list)).cuda()
-    for data, labels, _ in arl_obj.test_loader:
+    for data, labels in arl_obj.test_loader:
         data, labels = data.cuda(), labels.cuda()
         z, _ = arl_obj.vae.encode(data)#.view(-1, 784))
         z_tilde = arl_obj.obfuscator(z)
@@ -136,7 +145,7 @@ def multi_eps(ldp=False):
         noisy_preds = torch.cat(noisy_preds, 1).cuda()
         noisy_pred_correct += (noisy_preds == labels.unsqueeze(1).tile(1, noisy_preds.shape[1])).sum(0)
         num_samples += data.shape[0]
-    print(noisy_pred_correct / num_samples)
+    print(radius, noisy_pred_correct / num_samples)
 
 
 def alpha_sens():
@@ -186,5 +195,10 @@ def eps_acc():
             eval.test_ptr()
             print("-"*50, "Experiment over", "-"*50)
 
+def multi_eps_multi_r():
+    radii = [0.1, 0.2, 0.4, 0.6, 0.8, 1]
+    for radius in radii:
+        multi_eps(radius)
+
 if __name__ == '__main__':
-    multi_eps()
+    multi_eps_multi_r()

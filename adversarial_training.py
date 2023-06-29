@@ -42,6 +42,7 @@ class ContrastiveLoss(_Loss):
 
 class ARL(object):
     def __init__(self, config) -> None:
+        self.input_space = config.get('input_space') or False
         # Weighing term between privacy and accuracy, higher alpha has
         # higher weight towards privacy
         self.tag = config.get("tag") or None
@@ -53,7 +54,7 @@ class ARL(object):
         self.siamese_reg = config.get('siamese_reg') or False
 
         # obf_layer_sizes = [self.obf_in_size, 10, 10, 6, self.obf_out_size]
-        obf_layer_sizes = [self.obf_in_size, 8, 8, self.obf_out_size]
+        obf_layer_sizes = [self.obf_in_size, 10, self.obf_out_size]
         self.obfuscator = ReLUNet(obf_layer_sizes).cuda()
 
         self.dset = config["dset"]
@@ -75,8 +76,8 @@ class ARL(object):
         self.pred_loss_fn = torch.nn.CrossEntropyLoss()
         self.rec_loss_fn = torch.nn.MSELoss()
 
-        self.obf_optimizer = optim.Adam(self.obfuscator.parameters())
-        self.pred_optimizer = optim.Adam(self.pred_model.parameters())
+        self.obf_optimizer = optim.Adam(self.obfuscator.parameters(), lr=1e-4)
+        self.pred_optimizer = optim.Adam(self.pred_model.parameters(), lr=1e-4)
         self.adv_optimizer = optim.Adam(self.adv_model.parameters())
 
         if self.noise_reg:
@@ -86,7 +87,8 @@ class ARL(object):
             self.margin = config["margin"]
             self.setup_siamese_reg()
 
-        self.setup_vae()
+        if not self.input_space:
+            self.setup_vae()
         self.setup_data()
 
         self.min_final_loss = np.inf
@@ -110,12 +112,12 @@ class ARL(object):
     def setup_vae(self):
         self.vae, _ = setup_vae(self.dset)
         if self.dset == "mnist":
-            self.vae.load_state_dict(torch.load("saved_models/mnist_beta3_vae.pt"))
+            self.vae.load_state_dict(torch.load("saved_models/mnist_beta15_vae.pt"))
         elif self.dset == "fmnist":
-            self.vae.load_state_dict(torch.load("saved_models/fmnist_beta1_vae.pt"))
+            self.vae.load_state_dict(torch.load("saved_models/fmnist_beta2_vae.pt"))
         elif self.dset == "utkface":
-            wts = torch.load("/u/abhi24/Workspace/sanitizer/experiments/rebuttal/vae_beta0.5_age_seed15/saved_models/model_vae.pt", map_location=torch.device('cpu'))
-            wts = self.cleanse_state_dict(wts)
+            wts = torch.load("saved_models/utkface_beta0_vae.pt", map_location=torch.device('cpu'))
+            # wts = self.cleanse_state_dict(wts)
             self.vae.load_state_dict(wts)
         self.vae = self.vae.cuda()
         print("loaded vae")
@@ -178,21 +180,25 @@ class ARL(object):
         return noise_dist.sample()
 
     def train(self, epoch):
-        self.vae.eval()
+        if not self.input_space:
+            self.vae.eval()
         self.pred_model.train()
         train_loss = 0
         # Start training
         for batch_idx, (data, labels) in enumerate(self.train_loader):
 
             data, labels = data.cuda(), labels.cuda()
-            # get sample embedding from the VAE
-            with torch.no_grad():
-                if self.dset in ["mnist", "fmnist"]:
-                    mu, sigma = self.vae.encode(data.view(-1, 784))
-                else:
-                    mu, sigma = self.vae.encode(data)
-                z = self.vae.reparametrize(mu, sigma)
-            
+            if not self.input_space:
+                # get sample embedding from the VAE
+                with torch.no_grad():
+                    if self.dset in ["mnist", "fmnist"]:
+                        mu, sigma = self.vae.encode(data.view(-1, 784))
+                    else:
+                        mu, sigma = self.vae.encode(data)
+                    z = self.vae.reparametrize(mu, sigma)
+            else:
+                z = torch.flatten(data, start_dim=1)
+
             # pass it through obfuscator
             z_tilde = self.obfuscator(z)
 
@@ -220,7 +226,7 @@ class ARL(object):
             pred_loss = self.pred_loss_fn(preds, labels)
             rec = self.adv_model(z_tilde)
             rec_loss = self.rec_loss_fn(rec, data)
-            total_loss = self.alpha*rec_loss + (1-self.alpha)*pred_loss
+            total_loss = -self.alpha*rec_loss + (1-self.alpha)*pred_loss
 
             if self.siamese_reg:
                 siamese_loss = self.contrastive_loss(z, labels)
@@ -240,7 +246,8 @@ class ARL(object):
         print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(self.train_loader.dataset)))
 
     def test(self):
-        self.vae.eval()
+        if not self.input_space:
+           self.vae.eval()
         self.pred_model.eval()
         test_pred_loss= 0
         test_rec_loss= 0
@@ -248,11 +255,14 @@ class ARL(object):
         with torch.no_grad():
             for data, labels in self.test_loader:
                 data, labels = data.cuda(), labels.cuda()
-                if self.dset in ["mnist", "fmnist"]:
-                    mu, sigma = self.vae.encode(data.view(-1, 784))
+                if not self.input_space:
+                    if self.dset in ["mnist", "fmnist"]:
+                        mu, sigma = self.vae.encode(data.view(-1, 784))
+                    else:
+                        mu, sigma = self.vae.encode(data)
+                    z = self.vae.reparametrize(mu, sigma)
                 else:
-                    mu, sigma = self.vae.encode(data)
-                z = self.vae.reparametrize(mu, sigma)
+                    z = torch.flatten(data, start_dim=1)
 
                 # pass it through obfuscator
                 z_tilde = self.obfuscator(z)
@@ -277,30 +287,30 @@ class ARL(object):
             if self.dset in ["mnist", "fmnist"]:
                 rec_imgs = rec.view(-1, 1, 28, 28)
             elif self.dset == "utkface":
-                rec_imgs = rec.view(-1, 3, 64, 64)
+                rec_imgs = rec.view(-1, 3, 32, 32)
             save_image(rec_imgs,
                    '{}/epoch_{}.png'.format(self.base_dir, epoch))
             self.save_state()
             self.min_final_loss = final_loss
         pred_acc = pred_correct.item() / len(self.test_loader.dataset)
-        print('====> Test pred loss: {:.4f}, rec loss {:.4f}, acc {:.2f}'.format(test_pred_loss, test_rec_loss, pred_acc))
+        print('====> Test pred loss: {:.4f}, rec loss {:.4f}, acc {:.5f}'.format(test_pred_loss, test_rec_loss, pred_acc))
 
 
 if __name__ == '__main__':
-    # config = {"alpha": 0.95,
-    #           "dset": "utkface", "obf_in": 10, "obf_out": 8,
-    #           "lip_reg": False, "lip_coeff": 0.01,
-    #           "noise_reg": True, "sigma": 0.01,
-    #           "siamese_reg": True, "margin": 25, "lambda": 1.0,
-    #           "tag": "gender"
-    #           }
-    config = {'alpha': 0.99, 'dset': 'mnist', 'obf_in': 8, 'obf_out': 8,
-                  'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True,
-                  'sigma': 0.01, 'siamese_reg': True, 'margin': 25, 'lambda': 100.0}
+    config = {"alpha": 0.99,
+               "dset": "utkface", "obf_in": 512, "obf_out": 10,
+               "lip_reg": False, "lip_coeff": 0.01,
+               "noise_reg": False, "sigma": 0.1,
+               "siamese_reg": False, "margin": 25, "lambda": 1.0,
+               "tag": "gender", 'input_space': False
+               }
+    # config = {'alpha': 0.95, 'dset': 'mnist', 'obf_in': 784, 'obf_out': 5,
+    #          'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': False,
+    #          'sigma': 0.01, 'siamese_reg': False, 'margin': 25, 'lambda': 100.0, 'input_space': True}
     # config = {'dset': 'fmnist', 'alpha': 0.995, 'obf_in': 8, 'obf_out': 8, 'lip_reg': False, 'lip_coeff': 0.01, 'noise_reg': True, 'sigma': 0.01, 'siamese_reg': True, 'margin': 25., 'lambda': 50.0}
     arl = ARL(config)
     arl.setup_path()
     print("starting training", config)
-    for epoch in range(1, 51):
+    for epoch in range(1, 501):
         arl.train(epoch)
         arl.test()
